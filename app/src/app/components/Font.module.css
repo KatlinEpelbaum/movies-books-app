@@ -1,0 +1,6 @@
+@import url('https://api.fontshare.com/v2/css?f[]=melodrama@300,400,500,600,700&display=swap');
+
+/* Custom font class */
+.fontMelodrama {
+    font-family: 'Melodrama', serif;
+  }
