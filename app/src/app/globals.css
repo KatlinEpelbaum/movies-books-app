@@ -24,3 +24,22 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+.custom-shape-divider-bottom-1760958993 {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.custom-shape-divider-bottom-1760958993 svg {
+  position: relative;
+  display: block;
+  width: calc(161% + 1.3px);
+  height: 340px;
+}
+
+.custom-shape-divider-bottom-1760958993 .shape-fill {
+  fill: #060046;
+}
