@@ -157,7 +157,7 @@ export function MediaUserControls({ media, customLists = [], initialMediaLists =
                 }}
                 disabled={isPending}
             >
-                <SelectTrigger className="w-full">
+                <SelectTrigger suppressHydrationWarning className="w-full">
                     <SelectValue placeholder={media.isComingSoon ? (media.type === 'book' ? "Only To Read available" : "Only Plan to Watch available") : "Set status"} />
                 </SelectTrigger>
                 <SelectContent>

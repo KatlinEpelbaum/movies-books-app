@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getMediaAvailability, searchMedia } from "@/lib/media-api";
+import { getMediaAvailability, searchMedia, discoverByGenre, discoverBooksBySubject } from "@/lib/media-api";
 import type { ContentAvailabilityInput, ContentAvailabilityOutput, MediaItem, MediaStatus, MediaType, Stats } from "@/lib/types";
 import { createClient } from "@/utils/supabase/server";
 
@@ -17,7 +17,46 @@ export async function checkAvailabilityAction(input: ContentAvailabilityInput): 
 }
 
 export async function searchMediaAction(query: string, mediaType: MediaType | 'all', page: number = 1): Promise<MediaItem[]> {
-    return searchMedia(query, mediaType, page);
+    const results = await searchMedia(query, mediaType, page);
+    return enrichWithFavouriteStatus(results);
+}
+
+export async function discoverByGenreAction(genres: string[], mediaType: 'movie' | 'tv' | 'all', page: number = 1): Promise<MediaItem[]> {
+    const results = await discoverByGenre(genres, mediaType, page);
+    return enrichWithFavouriteStatus(results);
+}
+
+export async function discoverBooksBySubjectAction(genres: string[], page: number = 1, yearRange: string = 'any'): Promise<MediaItem[]> {
+    const results = await discoverBooksBySubject(genres, page, yearRange);
+    return enrichWithFavouriteStatus(results);
+}
+
+// Helper to enrich media items with user's favourite status
+async function enrichWithFavouriteStatus(items: MediaItem[]): Promise<MediaItem[]> {
+    if (items.length === 0) return items;
+    
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) return items;
+    
+    const mediaIds = items.map(item => item.id);
+    const { data: userMediaData } = await supabase
+        .from('user_media')
+        .select('media_id, is_favourite')
+        .eq('user_id', user.id)
+        .in('media_id', mediaIds);
+    
+    if (!userMediaData || userMediaData.length === 0) return items;
+    
+    const favouriteMap = new Map(
+        userMediaData.map(um => [um.media_id, um.is_favourite])
+    );
+    
+    return items.map(item => ({
+        ...item,
+        isFavourite: favouriteMap.get(item.id) || false
+    }));
 }
 
 // Enhanced manageUserLibraryAction with detailed logging
@@ -429,6 +468,9 @@ export async function getUserStats(): Promise<Stats> {
     totalWatchHours: 0,
     totalWatchMinutes: 0,
     watchHoursByMonth: [],
+    movieStats: { completed: 0, watchHours: 0, avgRating: 0 },
+    tvStats: { completed: 0, watchHours: 0, episodesWatched: 0, avgRating: 0 },
+    bookStats: { completed: 0, pagesRead: 0, avgRating: 0 },
   };
 
   if (!user) {
@@ -545,6 +587,23 @@ export async function getUserStats(): Promise<Stats> {
   
   let totalWatchMinutes = 0;
 
+  // Stats by media type
+  let movieWatchMinutes = 0;
+  let movieCompletedCount = 0;
+  let movieRatingSum = 0;
+  let movieRatedCount = 0;
+
+  let tvWatchMinutes = 0;
+  let tvCompletedCount = 0;
+  let tvEpisodesWatched = 0;
+  let tvRatingSum = 0;
+  let tvRatedCount = 0;
+
+  let bookPagesRead = 0;
+  let bookCompletedCount = 0;
+  let bookRatingSum = 0;
+  let bookRatedCount = 0;
+
   // Calculate watch hours from completed media
   completedList.forEach(item => {
     const media = mediaMap.get(item.media_id);
@@ -554,10 +613,32 @@ export async function getUserStats(): Promise<Stats> {
     
     if (media.type === 'movie') {
       runtimeMinutes = media.runtime || 120;
+      movieWatchMinutes += runtimeMinutes;
+      movieCompletedCount++;
+      if (item.rating && item.rating > 0) {
+        movieRatingSum += item.rating;
+        movieRatedCount++;
+      }
     } else if (media.type === 'tv') {
       const episodeRuntime = media.episode_runtime || 45;
       const totalEpisodes = media.number_of_episodes || 0;
       runtimeMinutes = episodeRuntime * totalEpisodes;
+      tvWatchMinutes += runtimeMinutes;
+      tvCompletedCount++;
+      tvEpisodesWatched += totalEpisodes;
+      if (item.rating && item.rating > 0) {
+        tvRatingSum += item.rating;
+        tvRatedCount++;
+      }
+    } else if (media.type === 'book') {
+      bookCompletedCount++;
+      // For completed books, count total pages from media_items if available
+      const totalPages = (media as any).total_pages || item.current_page || 300;
+      bookPagesRead += totalPages;
+      if (item.rating && item.rating > 0) {
+        bookRatingSum += item.rating;
+        bookRatedCount++;
+      }
     }
     
     totalWatchMinutes += runtimeMinutes;
@@ -582,6 +663,7 @@ export async function getUserStats(): Promise<Stats> {
     if (media.type === 'movie') {
       // For movies being watched, count full runtime
       runtimeMinutes = media.runtime || 120;
+      movieWatchMinutes += runtimeMinutes;
     } else if (media.type === 'tv') {
       // For TV shows, count from season 1 to current season/episode
       const episodeRuntime = media.episode_runtime || 45;
@@ -591,14 +673,22 @@ export async function getUserStats(): Promise<Stats> {
 
       // Count all episodes from season 1 to (current season - 1)
       let totalMinutes = 0;
+      let episodeCount = 0;
       for (let s = 1; s < currentSeason; s++) {
         const episodesInSeason = episodesPerSeason[s] || 10;
         totalMinutes += episodesInSeason * episodeRuntime;
+        episodeCount += episodesInSeason;
       }
       // Add episodes up to current episode in current season
       totalMinutes += currentEpisode * episodeRuntime;
+      episodeCount += currentEpisode;
       
       runtimeMinutes = totalMinutes;
+      tvWatchMinutes += runtimeMinutes;
+      tvEpisodesWatched += episodeCount;
+    } else if (media.type === 'book') {
+      // For books being read, count current page progress
+      bookPagesRead += item.current_page || 0;
     }
     
     totalWatchMinutes += runtimeMinutes;
@@ -669,6 +759,22 @@ export async function getUserStats(): Promise<Stats> {
         month: m.name,
         hours: Math.round(watchHoursByMonth.get(m.name) || 0)
     })),
+    movieStats: {
+      completed: movieCompletedCount,
+      watchHours: Math.floor(movieWatchMinutes / 60),
+      avgRating: movieRatedCount > 0 ? parseFloat((movieRatingSum / movieRatedCount).toFixed(1)) : 0,
+    },
+    tvStats: {
+      completed: tvCompletedCount,
+      watchHours: Math.floor(tvWatchMinutes / 60),
+      episodesWatched: tvEpisodesWatched,
+      avgRating: tvRatedCount > 0 ? parseFloat((tvRatingSum / tvRatedCount).toFixed(1)) : 0,
+    },
+    bookStats: {
+      completed: bookCompletedCount,
+      pagesRead: bookPagesRead,
+      avgRating: bookRatedCount > 0 ? parseFloat((bookRatingSum / bookRatedCount).toFixed(1)) : 0,
+    },
   };
 }
 

@@ -63,6 +63,23 @@ export interface Stats {
   totalWatchHours: number;
   totalWatchMinutes: number;
   watchHoursByMonth?: { month: string; hours: number }[];
+  // New fields for media type breakdown
+  movieStats: {
+    completed: number;
+    watchHours: number;
+    avgRating: number;
+  };
+  tvStats: {
+    completed: number;
+    watchHours: number;
+    episodesWatched: number;
+    avgRating: number;
+  };
+  bookStats: {
+    completed: number;
+    pagesRead: number;
+    avgRating: number;
+  };
 }
 
 export type ContentAvailabilityInput = {

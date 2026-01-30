@@ -325,6 +325,293 @@ async function getTrendingTmdb(type: 'movie' | 'tv'): Promise<MediaItem[]> {
   }
 }
 
+// Genre name to TMDB ID mapping
+const GENRE_NAME_TO_MOVIE_ID: Record<string, number> = {
+  'action': 28,
+  'adventure': 12,
+  'animation': 16,
+  'comedy': 35,
+  'crime': 80,
+  'documentary': 99,
+  'drama': 18,
+  'family': 10751,
+  'fantasy': 14,
+  'history': 36,
+  'historical': 36,
+  'horror': 27,
+  'music': 10402,
+  'mystery': 9648,
+  'romance': 10749,
+  'science fiction': 878,
+  'thriller': 53,
+  'war': 10752,
+  'western': 37,
+};
+
+const GENRE_NAME_TO_TV_ID: Record<string, number> = {
+  'action': 10759,
+  'adventure': 10759,
+  'animation': 16,
+  'comedy': 35,
+  'crime': 80,
+  'documentary': 99,
+  'drama': 18,
+  'family': 10751,
+  'fantasy': 10765,
+  'science fiction': 10765,
+  'mystery': 9648,
+  'war': 10768,
+  'western': 37,
+};
+
+// Discover media by genre using TMDB's discover endpoint
+export async function discoverByGenre(
+  genres: string[], 
+  type: 'movie' | 'tv' | 'all', 
+  page: number = 1
+): Promise<MediaItem[]> {
+  if (!TMDB_API_KEY) return [];
+  
+  const genreMapping = type === 'tv' ? GENRE_NAME_TO_TV_ID : GENRE_NAME_TO_MOVIE_ID;
+  const genreIds = genres
+    .map(g => genreMapping[g.toLowerCase()])
+    .filter(Boolean);
+  
+  if (genreIds.length === 0) return [];
+  
+  const results: MediaItem[] = [];
+  
+  const fetchDiscover = async (mediaType: 'movie' | 'tv') => {
+    const mapping = mediaType === 'tv' ? GENRE_NAME_TO_TV_ID : GENRE_NAME_TO_MOVIE_ID;
+    const ids = genres.map(g => mapping[g.toLowerCase()]).filter(Boolean);
+    if (ids.length === 0) return [];
+    
+    const url = new URL(`${TMDB_API_URL}/discover/${mediaType}`);
+    url.searchParams.append('api_key', TMDB_API_KEY);
+    url.searchParams.append('with_genres', ids.join(','));
+    url.searchParams.append('sort_by', 'popularity.desc');
+    url.searchParams.append('page', String(page));
+    
+    try {
+      const response = await fetch(url.toString());
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.results.map((item: any) => transformTmdbSearchResult(item, mediaType));
+    } catch (error) {
+      console.error(`Error discovering ${mediaType} by genre:`, error);
+      return [];
+    }
+  };
+  
+  if (type === 'all') {
+    const [movies, tvShows] = await Promise.all([
+      fetchDiscover('movie'),
+      fetchDiscover('tv')
+    ]);
+    // Interleave results
+    const maxLen = Math.max(movies.length, tvShows.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (i < movies.length) results.push(movies[i]);
+      if (i < tvShows.length) results.push(tvShows[i]);
+    }
+  } else {
+    results.push(...await fetchDiscover(type));
+  }
+  
+  return results;
+}
+
+// Map genre names to OpenLibrary subject slugs
+const GENRE_TO_SUBJECT: Record<string, string> = {
+  'romance': 'romance',
+  'comedy': 'humor',
+  'drama': 'drama',
+  'adventure': 'adventure',
+  'fantasy': 'fantasy',
+  'science fiction': 'science_fiction',
+  'horror': 'horror',
+  'mystery': 'mystery',
+  'thriller': 'thriller',
+  'crime': 'crime',
+  'historical': 'historical_fiction',
+  'family': 'family',
+  'fiction': 'fiction',
+  'non-fiction': 'nonfiction',
+  'young adult': 'young_adult',
+  'children': 'juvenile_fiction',
+  'self-help': 'self-help',
+  'biography': 'biography',
+  'history': 'history',
+  'poetry': 'poetry',
+  'classics': 'classics',
+};
+
+// Discover books by subject using OpenLibrary subjects API
+export async function discoverBooksBySubject(
+  genres: string[],
+  page: number = 1,
+  yearRange: string = 'any'
+): Promise<MediaItem[]> {
+  if (genres.length === 0) return [];
+  
+  // Get the subject slug for the first genre
+  const genreKey = genres[0].toLowerCase().trim();
+  const subject = GENRE_TO_SUBJECT[genreKey];
+  if (!subject) {
+    console.log(`[OpenLibrary] No subject mapping for "${genres[0]}" (key: "${genreKey}"). Available: ${Object.keys(GENRE_TO_SUBJECT).join(', ')}`);
+    return [];
+  }
+  
+  // Parse year range
+  let startYear = 0;
+  let endYear = 9999;
+  if (yearRange !== 'any') {
+    const [start, end] = yearRange.split('-').map(Number);
+    startYear = start;
+    endYear = end;
+  }
+  
+  try {
+    // Fetch more results so we have enough after year filtering
+    const limit = yearRange === 'any' ? 25 : 100;
+    const offset = (page - 1) * limit;
+    const url = `https://openlibrary.org/subjects/${subject}.json?limit=${limit}&offset=${offset}`;
+    
+    console.log(`[OpenLibrary Subjects] Fetching ${subject} (page ${page}, years ${startYear}-${endYear})`);
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    
+    if (!response.ok) {
+      console.error(`[OpenLibrary Subjects] Failed with status ${response.status}`);
+      return [];
+    }
+    
+    const data = await response.json();
+    console.log(`[OpenLibrary Subjects] Found ${data.work_count} total works`);
+    
+    if (!data.works || !Array.isArray(data.works)) {
+      return [];
+    }
+
+    // If year filter is specified, filter results
+    let works = data.works;
+    if (yearRange !== 'any') {
+      works = works.filter((work: any) => {
+        if (!work.first_publish_year) return false;
+        return work.first_publish_year >= startYear && work.first_publish_year <= endYear;
+      }).slice(0, 25); // Take first 25 after filtering
+    }
+    
+    const mediaItems = works.map((work: any) => {
+      if (!work.key || !work.title) return null;
+      
+      const workId = work.key.replace('/works/', '');
+      
+      const authors = work.authors && work.authors.length > 0
+        ? work.authors.map((a: any) => a.name).slice(0, 3).join(', ')
+        : 'Unknown Author';
+      
+      const coverImage = work.cover_id
+        ? `https://covers.openlibrary.org/b/id/${work.cover_id}-L.jpg`
+        : undefined;
+      
+      return {
+        id: `book-${workId}`,
+        title: work.title,
+        type: 'book' as MediaType,
+        coverImage: coverImage || `https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=400&h=600&fit=crop`,
+        authorOrDirector: authors,
+        year: work.first_publish_year || 0,
+        description: '',
+        genres: [genres[0]], // Use the searched genre
+        isFavourite: false,
+      };
+    }).filter(Boolean);
+    
+    console.log(`[OpenLibrary Subjects] Returning ${mediaItems.length} books (year range: ${startYear}-${endYear})`);
+    return mediaItems;
+    
+  } catch (error) {
+    console.error('[OpenLibrary Subjects] Error:', error);
+    return [];
+  }
+}
+
+// Search OpenLibrary for books - much better than Gutendex for modern books
+async function searchOpenLibraryBooks(query: string, page: number = 1): Promise<MediaItem[]> {
+    try {
+        const encodedQuery = encodeURIComponent(query);
+        const limit = 25;
+        const offset = (page - 1) * limit;
+        
+        // Use OpenLibrary search API with good defaults
+        const url = `https://openlibrary.org/search.json?q=${encodedQuery}&limit=${limit}&offset=${offset}&fields=key,title,author_name,first_publish_year,cover_i,subject,ratings_average`;
+        
+        console.log(`[OpenLibrary Search] Searching for: "${query}" (page ${page})`);
+        
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
+        
+        if (!response.ok) {
+            console.error(`[OpenLibrary Search] Failed with status ${response.status}`);
+            return [];
+        }
+        
+        const data = await response.json();
+        console.log(`[OpenLibrary Search] Found ${data.numFound} total, returned ${data.docs?.length || 0} results`);
+        
+        if (!data.docs || !Array.isArray(data.docs)) {
+            return [];
+        }
+
+        const mediaItems = data.docs.map((book: any) => {
+            if (!book.key || !book.title) return null;
+            
+            // Extract work ID from key (e.g., "/works/OL81631W" -> "OL81631W")
+            const workId = book.key.replace('/works/', '');
+            
+            const authors = book.author_name && book.author_name.length > 0
+                ? book.author_name.slice(0, 3).join(', ')
+                : 'Unknown Author';
+            
+            // Get genres from subjects
+            const genres = book.subject ? book.subject.slice(0, 5) : [];
+            
+            // Cover image from cover_i
+            const coverImage = book.cover_i 
+                ? `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg`
+                : undefined;
+            
+            return {
+                id: `book-${workId}`,
+                title: book.title,
+                type: 'book' as const,
+                coverImage: coverImage || '/placeholder-book.png',
+                authorOrDirector: authors,
+                description: '',
+                genres: genres,
+                year: book.first_publish_year || 0,
+                rating: book.ratings_average || undefined,
+            };
+        });
+
+        const filtered = mediaItems.filter((item): item is MediaItem => item !== null && item.coverImage !== '/placeholder-book.png');
+        console.log(`[OpenLibrary Search] Returned ${filtered.length} books with covers for "${query}"`);
+        return filtered;
+
+    } catch (error) {
+        console.error("Error searching OpenLibrary:", error);
+        return [];
+    }
+}
+
 async function searchGutendexBooks(query: string, page: number = 1): Promise<MediaItem[]> {
     try {
         const encodedQuery = encodeURIComponent(query);
@@ -442,6 +729,7 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
         }
         
         // Try editions for cover and page count
+        let yearFromEdition = 0;
         try {
             const editionsUrl = `https://openlibrary.org/works/${cleanId}/editions.json`;
             const editionsResponse = await fetch(editionsUrl);
@@ -457,8 +745,12 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
                         if (!totalPages && edition.number_of_pages) {
                             totalPages = edition.number_of_pages;
                         }
-                        // If we have both, break early
-                        if (coverImage && totalPages) break;
+                        // Get publish year if available and we haven't found one yet
+                        if (yearFromEdition === 0 && edition.publish_date) {
+                            yearFromEdition = parseInt(String(edition.publish_date).substring(0, 4)) || 0;
+                        }
+                        // If we have cover, pages, and year, break early
+                        if (coverImage && totalPages && yearFromEdition > 0) break;
                     }
                 }
             }
@@ -478,13 +770,73 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
                 : work.description.value || '';
         }
         
-        // Get genres/subjects
-        const genres = work.subjects ? work.subjects.slice(0, 5) : [];
+        // Get genres from OpenLibrary subjects - extract readable genre info
+        let genres: string[] = [];
+        if (work.subjects && Array.isArray(work.subjects)) {
+            const foundGenres = new Set<string>();
+            
+            for (const subject of work.subjects) {
+                const lowerSubject = subject.toLowerCase();
+                
+                // Skip metadata that's not a genre
+                if (lowerSubject.startsWith('serie:') ||
+                    lowerSubject.startsWith('time:') ||
+                    lowerSubject.startsWith('place:') ||
+                    lowerSubject.startsWith('people:') ||
+                    lowerSubject.includes('bestseller') ||
+                    lowerSubject.includes('award') ||
+                    /^\d+/.test(subject)) {
+                    continue;
+                }
+                
+                // Clean prefixes first (nyt:, lcsh:, etc)
+                let genre = subject.replace(/^[a-z]+:\s*/i, '');
+                
+                // Extract the main genre part (before special characters or numbers)
+                genre = genre
+                    .split(/[=\-\d]/)[0] // Take everything before =, -, or digits
+                    .trim();
+                
+                // Skip if empty or too long
+                if (!genre || genre.length < 2 || genre.length > 50) {
+                    continue;
+                }
+                
+                // Skip generic terms and non-genres
+                if (/^(hardcover|paperback|e.?book|american|fiction|by author|children|juvenile)$/i.test(genre)) {
+                    continue;
+                }
+                
+                foundGenres.add(genre);
+            }
+            
+            genres = Array.from(foundGenres).slice(0, 5);
+        }
         
-        // Get first publish year
-        const year = work.first_publish_date 
-            ? parseInt(work.first_publish_date.substring(0, 4)) || 0 
-            : 0;
+        // Get first publish year - try multiple fields
+        let year = 0;
+        if (work.first_published_date) {
+            year = parseInt(work.first_published_date.substring(0, 4)) || 0;
+        } else if (work.first_publish_year) {
+            year = work.first_publish_year;
+        } else if (work.publish_date) {
+            year = parseInt(String(work.publish_date).substring(0, 4)) || 0;
+        }
+        
+        // If still no year, use year from editions
+        if (year === 0 && yearFromEdition > 0) {
+            year = yearFromEdition;
+        }
+        
+        // If still no year, try to extract from the first edition if available in work
+        if (year === 0 && Array.isArray(work.editions) && work.editions.length > 0) {
+            for (const edition of work.editions) {
+                if (edition.publish_date) {
+                    year = parseInt(String(edition.publish_date).substring(0, 4)) || 0;
+                    if (year > 0) break;
+                }
+            }
+        }
         
         return {
             id: `book-${cleanId}`,
@@ -585,24 +937,24 @@ export async function searchMedia(query: string, type: MediaType | 'all' = 'all'
         return searchTmdb('tv', query, page);
     }
     if (type === 'book') {
-        return searchGutendexBooks(query, page);
+        return searchOpenLibraryBooks(query, page);
     }
     
     // For 'all', fetch movies, TV shows, and books separately to get better combined results
     const [movies, tvShows, books] = await Promise.all([
         searchTmdb('movie', query, page),
         searchTmdb('tv', query, page),
-        searchGutendexBooks(query, page)
+        searchOpenLibraryBooks(query, page)
     ]);
     
-    // Interleave movies and TV shows for a better mix, then add books
+    // Interleave movies, TV shows, and books for a better mix
     const combined: MediaItem[] = [];
-    const maxLen = Math.max(movies.length, tvShows.length);
+    const maxLen = Math.max(movies.length, tvShows.length, books.length);
     for (let i = 0; i < maxLen; i++) {
         if (i < movies.length) combined.push(movies[i]);
         if (i < tvShows.length) combined.push(tvShows[i]);
+        if (i < books.length) combined.push(books[i]);
     }
-    combined.push(...books);
     
     return combined;
 }
@@ -843,10 +1195,41 @@ async function transformOpenLibraryBook(book: any): Promise<MediaItem | null> {
         console.log('[Books API]', book.title, '- using Unsplash fallback');
     }
 
-    // Get genres/subjects from the book
-    const genres = (book.subject && Array.isArray(book.subject) && book.subject.length > 0)
-        ? book.subject.slice(0, 5)
-        : [];
+    // Get genres/subjects from the book - try multiple fields
+    let genres: string[] = [];
+    
+    if (book.subject && Array.isArray(book.subject) && book.subject.length > 0) {
+        genres = book.subject.slice(0, 5);
+    } else if (book.subjects && Array.isArray(book.subjects) && book.subjects.length > 0) {
+        genres = book.subjects.map((s: any) => typeof s === 'string' ? s : s.name).slice(0, 5);
+    }
+    
+    // If no genres, try to fetch from the work details
+    if (genres.length === 0 && keyId && keyId.startsWith('OL')) {
+        try {
+            const workUrl = `https://openlibrary.org/works/${keyId}.json`;
+            const workResponse = await fetch(workUrl);
+            if (workResponse.ok) {
+                const workData = await workResponse.json();
+                if (workData.subjects && Array.isArray(workData.subjects)) {
+                    // Clean up subject names (remove "fiction" prefix patterns, capitalize nicely)
+                    genres = workData.subjects
+                        .slice(0, 8)
+                        .map((s: string) => {
+                            // Clean up common prefixes and make it readable
+                            return s.replace(/^(Fiction|Juvenile fiction|Young adult fiction),?\s*/i, '')
+                                    .split(',')[0]
+                                    .trim();
+                        })
+                        .filter((s: string) => s.length > 0 && s.length < 30)
+                        .slice(0, 5);
+                    console.log('[Books API]', book.title, '- fetched genres:', genres);
+                }
+            }
+        } catch (e) {
+            console.log('[Books API] Could not fetch genres for', book.title);
+        }
+    }
 
     const transformedBook = {
         id: `book-${keyId}`,
@@ -866,7 +1249,7 @@ async function transformOpenLibraryBook(book: any): Promise<MediaItem | null> {
 
 const getCachedTrendingBooks = unstable_cache(
   async () => fetchTrendingBooksData(),
-  ['trending-books-openlibrary-weekly-v1'],
+  ['trending-books-openlibrary-weekly-v2-with-genres'],
   { revalidate: 3600 } // Revalidate hourly since weekly data doesn't change as often
 );
 

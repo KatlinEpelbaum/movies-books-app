@@ -27,6 +27,7 @@ import {
 import { AvailabilityChecker } from "@/components/media/availability-checker";
 import { RatingStars } from "@/components/media/rating-stars";
 import { TrailerButton } from "@/components/media/trailer-button";
+import { BackButton } from "@/components/media/back-button";
 import { getMediaDetails } from "@/lib/media-api";
 import { MediaType } from "@/lib/types";
 import { createClient } from "@/utils/supabase/server";
@@ -84,6 +85,8 @@ export default async function MediaDetailPage({ params }: { params: { id: string
   
   return (
     <div className="mx-auto max-w-6xl space-y-8">
+      <BackButton />
+      
       <div className="grid gap-8 md:grid-cols-3">
         {/* Left Column */}
         <div className="md:col-span-1">

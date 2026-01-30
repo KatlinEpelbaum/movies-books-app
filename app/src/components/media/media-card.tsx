@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { Heart } from 'lucide-react';
-import { useOptimistic, useTransition, useState } from 'react';
+import { useTransition, useState, useEffect } from 'react';
 import { manageUserLibraryAction } from '@/app/actions';
 import { MediaItem } from '@/lib/types';
 import {
@@ -17,10 +17,27 @@ interface MediaCardProps {
   media: MediaItem;
 }
 
+const SEARCH_STORAGE_KEY = 'search-state';
+
 export function MediaCard({ media }: MediaCardProps) {
-  const [optimisticMedia, setOptimisticMedia] = useOptimistic(media);
+  const [isFavourite, setIsFavourite] = useState(media.isFavourite ?? false);
   const [isPending, startTransition] = useTransition();
   const [imageSrc, setImageSrc] = useState(media.coverImage);
+
+  // Sync with prop when it changes (e.g., from server refetch)
+  useEffect(() => {
+    setIsFavourite(media.isFavourite ?? false);
+  }, [media.isFavourite]);
+
+  // Save scroll position before navigating
+  const handleCardClick = () => {
+    const savedState = sessionStorage.getItem(SEARCH_STORAGE_KEY);
+    if (savedState) {
+      const state = JSON.parse(savedState);
+      state.scrollY = window.scrollY;
+      sessionStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(state));
+    }
+  };
 
   const handleImageError = () => {
     // Fallback to Unsplash book image if OpenLibrary fails
@@ -33,10 +50,10 @@ export function MediaCard({ media }: MediaCardProps) {
     e.preventDefault();
     e.stopPropagation();
 
-    startTransition(async () => {
-      const newFavouriteStatus = !optimisticMedia.isFavourite;
-      setOptimisticMedia({ ...optimisticMedia, isFavourite: newFavouriteStatus });
+    const newFavouriteStatus = !isFavourite;
+    setIsFavourite(newFavouriteStatus); // Immediate UI update
 
+    startTransition(async () => {
       const formData = new FormData();
       formData.set('mediaId', media.id);
       formData.set('mediaType', media.type);
@@ -53,7 +70,7 @@ export function MediaCard({ media }: MediaCardProps) {
 
   return (
     <Card className="group relative overflow-hidden transition-all duration-300 hover:shadow-lg">
-      <Link href={`/media/${media.id}`} className="block">
+      <Link href={`/media/${media.id}`} className="block" onClick={handleCardClick}>
         <CardContent className="p-0">
           <Image
             src={imageSrc}
@@ -64,7 +81,7 @@ export function MediaCard({ media }: MediaCardProps) {
             data-ai-hint="book cover movie poster"
             onError={handleImageError}
           />
-          {optimisticMedia.isComingSoon && (
+          {media.isComingSoon && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <div className="rounded-full bg-orange-500 px-4 py-2 text-center text-sm font-bold text-white">
                 Coming Soon
@@ -85,9 +102,9 @@ export function MediaCard({ media }: MediaCardProps) {
         variant="ghost"
         size="icon"
         className="absolute right-2 top-2 rounded-full bg-background/50 text-primary-foreground backdrop-blur-sm transition-all hover:bg-background/75 hover:text-primary-foreground focus:ring-primary"
-        aria-label={optimisticMedia.isFavourite ? "Remove from favourites" : "Add to favourites"}
+        aria-label={isFavourite ? "Remove from favourites" : "Add to favourites"}
       >
-        <Heart className={cn("h-5 w-5", optimisticMedia.isFavourite ? "fill-primary text-primary" : "text-primary")} />
+        <Heart className={cn("h-5 w-5", isFavourite ? "fill-primary text-primary" : "text-primary")} />
       </Button>
     </Card>
   );
