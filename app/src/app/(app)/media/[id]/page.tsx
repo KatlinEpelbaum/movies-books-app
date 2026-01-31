@@ -49,34 +49,15 @@ async function getMediaUserData(mediaId: string, userId?: string, type?: string)
     if (!userId) return null;
     const supabase = await createClient();
     
-    // Query the appropriate table based on media type
-    if (type === 'book') {
-      const { data } = await supabase
-        .from('Book')
-        .select('status, rating, userId')
-        .eq('userId', userId)
-        .eq('id', mediaId)
-        .single();
-      return data;
-    } else if (type === 'movie') {
-      const { data } = await supabase
-        .from('Movie')
-        .select('status, rating, userId')
-        .eq('userId', userId)
-        .eq('id', mediaId)
-        .single();
-      return data;
-    } else if (type === 'tv') {
-      const { data } = await supabase
-        .from('TVShow')
-        .select('status, rating, userId, currentSeason, currentEpisode')
-        .eq('userId', userId)
-        .eq('id', mediaId)
-        .single();
-      return data;
-    }
+    // Query user_media table for all types
+    const { data } = await supabase
+      .from('user_media')
+      .select('status, rating, is_favourite, current_page, current_episode, current_season, completed_at')
+      .eq('user_id', userId)
+      .eq('media_id', mediaId)
+      .single();
     
-    return null;
+    return data;
 }
 
 
@@ -145,6 +126,34 @@ export default async function MediaDetailPage({ params }: { params: { id: string
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 {typeIcons[media.type]}
                 <span className="capitalize">{media.type}</span>
+                {media.userStatus && (
+                  <>
+                    <span className="mx-1">•</span>
+                    {media.type === 'tv' && (media.currentSeason || media.currentEpisode) ? (
+                      <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                        S{media.currentSeason || 1}E{media.currentEpisode || 0}
+                        {media.totalEpisodes ? ` of ${media.totalEpisodes}` : ''}
+                      </Badge>
+                    ) : (
+                      <Badge 
+                        variant="outline"
+                        className={
+                          media.userStatus === 'watching' 
+                            ? 'bg-red-50 text-red-700' 
+                            : media.userStatus === 'reading'
+                            ? 'bg-amber-50 text-amber-700'
+                            : 'bg-green-50 text-green-700'
+                        }
+                      >
+                        {media.userStatus === 'watching' 
+                          ? '▶ Watching' 
+                          : media.userStatus === 'reading'
+                          ? '📖 Reading'
+                          : '✓ Completed'}
+                      </Badge>
+                    )}
+                  </>
+                )}
               </div>
               <h1 className="font-headline text-4xl font-bold">
                 {media.title}

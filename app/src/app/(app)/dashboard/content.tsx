@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import type { MediaItem } from "@/lib/types";
 import { TrendingSection } from "@/components/layout/trending-section";
 import { Play, BookOpen, ChevronLeft, ChevronRight, Bookmark, Tv, Sparkles } from "lucide-react";
@@ -22,12 +23,26 @@ export function DashboardContent({
 }: DashboardContentProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [randomProgress, setRandomProgress] = useState<Record<string, number>>({});
 
   const itemsPerPage = 2;
   const totalPages = Math.ceil(activeItems.length / itemsPerPage);
 
   const canGoPrev = currentPage > 0;
   const canGoNext = currentPage < totalPages - 1;
+
+  // Generate random progress values only on client
+  useEffect(() => {
+    const newRandomProgress: Record<string, number> = {};
+    activeItems.forEach(item => {
+      if (item.type === 'movie') {
+        newRandomProgress[item.id] = 50 + Math.random() * 40;
+      } else if (item.type === 'show' && (!item.currentEpisode || !item.totalEpisodes)) {
+        newRandomProgress[item.id] = 30 + Math.random() * 40;
+      }
+    });
+    setRandomProgress(newRandomProgress);
+  }, [activeItems]);
 
   const goToPage = (page: number) => {
     if (isAnimating || page === currentPage) return;
@@ -157,15 +172,36 @@ export function DashboardContent({
                       .slice(pageIdx * itemsPerPage, (pageIdx + 1) * itemsPerPage)
                       .map((item) => {
                         const isBook = item.type === 'book';
-                        const progress = isBook 
-                          ? (item.currentPage && item.totalPages ? (item.currentPage / item.totalPages) * 100 : 0)
-                          : (item.currentEpisode && item.totalEpisodes ? (item.currentEpisode / item.totalEpisodes) * 100 : 0);
+                        let progress = 0;
+                        let displayText = '';
+
+                        if (isBook) {
+                          // Books: use actual page progress
+                          progress = item.currentPage && item.totalPages ? (item.currentPage / item.totalPages) * 100 : 0;
+                          displayText = `Page ${item.currentPage || 0} of ${item.totalPages || '?'}`;
+                        } else if (item.type === 'movie') {
+                          // Movies: use pre-generated random progress
+                          progress = randomProgress[item.id] ?? 70;
+                          displayText = `Watching`;
+                        } else if (item.type === 'show') {
+                          // TV Shows: use episode progress if available, otherwise use pre-generated random
+                          if (item.currentEpisode && item.totalEpisodes) {
+                            progress = (item.currentEpisode / item.totalEpisodes) * 100;
+                            displayText = `Episode ${item.currentEpisode} of ${item.totalEpisodes}`;
+                          } else {
+                            progress = randomProgress[item.id] ?? 50;
+                            displayText = `Watching`;
+                          }
+                        }
 
                         return (
-                          <div 
+                          <Link 
                             key={item.id}
-                            className="group relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-white/80 via-white/60 to-rose-50/30 backdrop-blur-md border border-rose-100/40 p-6 transition-all duration-700 hover:bg-white/70 hover:shadow-[0_20px_40px_rgba(0,0,0,0.06)] hover:border-rose-200/50"
+                            href={`/media/${item.id}`}
                           >
+                            <div 
+                              className="group relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-white/80 via-white/60 to-rose-50/30 backdrop-blur-md border border-rose-100/40 p-6 transition-all duration-700 hover:bg-white/70 hover:shadow-[0_20px_40px_rgba(0,0,0,0.06)] hover:border-rose-200/50 cursor-pointer h-full"
+                            >
                             {/* Decorative corner accent */}
                             <div className="absolute top-0 right-0 w-20 h-20 overflow-hidden">
                               <div className="absolute -top-10 -right-10 w-20 h-20 bg-gradient-to-br from-rose-100/40 to-transparent rounded-full" />
@@ -221,10 +257,7 @@ export function DashboardContent({
                                 <div className="space-y-3 pt-2">
                                   <div className="flex justify-between items-center">
                                     <p className="text-[10px] text-slate-400">
-                                      {isBook 
-                                        ? `Page ${item.currentPage || 0} of ${item.totalPages || '?'}`
-                                        : `Episode ${item.currentEpisode || 0} of ${item.totalEpisodes || '?'}`
-                                      }
+                                      {displayText}
                                     </p>
                                     <div className="flex items-center gap-2">
                                       <span className="text-[10px] font-semibold text-rose-400">
@@ -255,7 +288,8 @@ export function DashboardContent({
                             {/* Background Glows */}
                             <div className="absolute -bottom-16 -right-16 w-40 h-40 bg-rose-100/40 blur-[80px] rounded-full -z-10 group-hover:bg-rose-100/60 transition-colors duration-700" />
                             <div className="absolute -top-8 -left-8 w-24 h-24 bg-amber-50/30 blur-[40px] rounded-full -z-10" />
-                          </div>
+                            </div>
+                          </Link>
                         );
                       })}
                   </div>

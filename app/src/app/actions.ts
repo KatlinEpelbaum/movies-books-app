@@ -1152,7 +1152,7 @@ export async function likeReviewAction(reviewId: string) {
 }
 
 // REVIEW COMMENTS ACTIONS
-export async function createCommentAction(reviewId: string, text: string) {
+export async function createCommentAction(reviewId: string, text: string, parentCommentId?: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   
@@ -1164,6 +1164,7 @@ export async function createCommentAction(reviewId: string, text: string) {
       user_id: user.id,
       review_id: reviewId,
       text,
+      parent_comment_id: parentCommentId || null,
     })
     .select()
     .single();
@@ -1179,9 +1180,11 @@ export async function createCommentAction(reviewId: string, text: string) {
 export async function getReviewCommentsAction(reviewId: string) {
   const supabase = await createClient();
 
+  console.log('🔍 Fetching comments for review:', reviewId);
+
   const { data: comments, error } = await supabase
     .from('review_comments')
-    .select('id, user_id, text, created_at, updated_at')
+    .select('id, user_id, text, created_at, updated_at, parent_comment_id, review_id')
     .eq('review_id', reviewId)
     .order('created_at', { ascending: true });
 
@@ -1189,6 +1192,8 @@ export async function getReviewCommentsAction(reviewId: string) {
     console.error("Comments fetch error:", error);
     return [];
   }
+
+  console.log('📋 Raw comments fetched:', comments);
 
   // Enrich with user profiles and like counts
   const enrichedComments = await Promise.all(
@@ -1212,7 +1217,19 @@ export async function getReviewCommentsAction(reviewId: string) {
     })
   );
 
-  return enrichedComments;
+  console.log('✅ Enriched comments:', enrichedComments);
+
+  // Organize comments into parent-reply structure
+  const parentComments = enrichedComments.filter(c => !c.parent_comment_id);
+  const replies = enrichedComments.filter(c => c.parent_comment_id);
+
+  const commentsWithReplies = parentComments.map(parent => ({
+    ...parent,
+    replies: replies.filter(reply => reply.parent_comment_id === parent.id),
+  }));
+
+  console.log('🎯 Final comments with replies:', commentsWithReplies);
+  return commentsWithReplies;
 }
 
 export async function deleteCommentAction(commentId: string) {
@@ -1233,6 +1250,39 @@ export async function deleteCommentAction(commentId: string) {
   }
 
   return { success: true };
+}
+
+export async function likeCommentAction(commentId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+
+  const { error } = await supabase
+    .from('comment_likes')
+    .insert({
+      user_id: user.id,
+      comment_id: commentId,
+    });
+
+  if (error?.code === 'P0001' || error?.message?.includes('unique')) {
+    // Already liked, try to delete
+    const { error: deleteError } = await supabase
+      .from('comment_likes')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('comment_id', commentId);
+
+    if (deleteError) return { error: deleteError.message };
+    return { success: true, liked: false };
+  }
+
+  if (error) {
+    console.error("Like error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true, liked: true };
 }
 
 // FOLLOW ACTIONS
