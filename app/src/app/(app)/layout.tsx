@@ -24,7 +24,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <SidebarTrigger />
             <h1 className="text-lg font-semibold font-headline">Lune</h1>
           </header>
-          <main className="flex-1 p-4 md:p-6">{children}</main>
+          <main className="flex-1 p-4 md:p-6 bg-white">{children}</main>
         </SidebarInset>
       </div>
     </SidebarProvider>

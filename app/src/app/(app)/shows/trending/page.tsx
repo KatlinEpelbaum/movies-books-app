@@ -2,7 +2,7 @@ import { getTrendingShows } from "@/lib/media-api";
 import { MediaCard } from "@/components/media/media-card";
 import { createClient } from "@/utils/supabase/server";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { ChevronLeft } from "lucide-react";
 
 export default async function TrendingShowsPage() {
   const supabase = await createClient();
@@ -29,30 +29,55 @@ export default async function TrendingShowsPage() {
   }));
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Trending TV Shows</h1>
-          <p className="text-muted-foreground mt-2">
-            Showing {trendingShowsWithStatus.length} popular TV shows
-          </p>
+    <div className="w-full px-4 md:px-10 py-12 space-y-16 animate-in fade-in duration-700">
+      
+      {/* Header: Editorial & Sophisticated */}
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-slate-100 pb-12">
+        <div className="space-y-4">
+          <Link 
+            href="/dashboard" 
+            className="group flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] font-bold text-slate-400 hover:text-rose-400 transition-colors"
+          >
+            <ChevronLeft className="h-3 w-3 transition-transform group-hover:-translate-x-1" />
+            Back to Dashboard
+          </Link>
+          <div className="space-y-1">
+            <h1 className="text-5xl md:text-6xl font-headline font-semibold tracking-tight text-slate-900">
+              Television <span className="italic font-light">Series</span>
+            </h1>
+            <p className="text-slate-400 font-light text-lg">
+              The season's most-watched series and trending favorites.
+            </p>
+          </div>
         </div>
-        <Link href="/dashboard">
-          <Button variant="outline">Back to Dashboard</Button>
-        </Link>
-      </div>
+        
+        <div className="hidden md:block text-right">
+          <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-rose-300">Episodes</p>
+          <p className="text-2xl font-headline font-medium">{trendingShowsWithStatus.length}</p>
+        </div>
+      </header>
 
+      {/* Grid: Unrestricted & Expansive */}
       {trendingShowsWithStatus.length > 0 ? (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {trendingShowsWithStatus.slice(0, 20).map((item) => (
-            <MediaCard key={item.id} media={item} />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-12 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+          {trendingShowsWithStatus.slice(0, 24).map((item) => (
+            <div key={item.id} className="transition-transform duration-500 hover:-translate-y-2">
+              <MediaCard media={item} />
+            </div>
           ))}
         </div>
       ) : (
-        <div className="rounded-lg border border-dashed p-8 text-center">
-          <p className="text-muted-foreground">No trending TV shows available.</p>
+        <div className="flex h-[40vh] items-center justify-center rounded-[3rem] bg-slate-50 border border-slate-100">
+          <p className="font-headline text-slate-400 italic">No series found in the current rotation.</p>
         </div>
       )}
+      
+      <footer className="pt-20 text-center">
+        <div className="h-px w-24 bg-rose-200 mx-auto mb-6" />
+        <p className="font-headline text-[10px] uppercase tracking-[0.5em] text-slate-300">
+          Curated by Lune
+        </p>
+      </footer>
     </div>
   );
 }
