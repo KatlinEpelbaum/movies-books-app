@@ -28,6 +28,8 @@ import { AvailabilityChecker } from "@/components/media/availability-checker";
 import { RatingStars } from "@/components/media/rating-stars";
 import { TrailerButton } from "@/components/media/trailer-button";
 import { BackButton } from "@/components/media/back-button";
+import { ReviewForm } from "@/components/media/review-form";
+import { ReviewsSection } from "@/components/media/reviews-section";
 import { getMediaDetails } from "@/lib/media-api";
 import { MediaType } from "@/lib/types";
 import { createClient } from "@/utils/supabase/server";
@@ -162,11 +164,11 @@ export default async function MediaDetailPage({ params }: { params: { id: string
                 Reviews
             </h2>
 
-            <div className="flex h-48 items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/20">
-              <p className="text-center text-muted-foreground">
-                User reviews are coming soon!
-              </p>
-            </div>
+            {/* Review Form */}
+            <ReviewForm mediaId={media.id} />
+
+            {/* Reviews List */}
+            <ReviewsSection mediaId={media.id} />
           </div>
         </div>
       </div>

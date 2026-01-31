@@ -790,64 +790,75 @@ export async function updateUserProfileAction(
     return { message: "", error: "You must be logged in to update your profile." };
   }
 
-  const name = formData.get("username") as string;
+  const username = formData.get("username") as string;
+  const display_name = formData.get("display_name") as string;
   const bio = formData.get("bio") as string;
-  const avatarFile = formData.get("avatar") as File;
+  const profile_picture_url = formData.get("profile_picture_url") as string;
+  const banner_url = formData.get("banner_url") as string;
 
-  const userMetadata: { full_name: string; bio: string; avatar_url?: string } = {
-    full_name: name,
-    bio,
-  };
+  // Validate username
+  if (!username || username.trim().length < 2) {
+    return { message: "", error: "Username must be at least 2 characters." };
+  }
 
-  // Handle avatar upload
-  if (avatarFile && avatarFile.size > 0) {
-    if (avatarFile.size > 1024 * 1024 * 2) { // 2MB limit
-      return { message: "", error: "Avatar image must be less than 2MB." };
-    }
-    
-    try {
-      const fileExt = avatarFile.name.split(".").pop();
-      const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+  try {
+    // Check if user already has a profile and if they can change username
+    const { data: existingProfile } = await supabase
+      .from("user_profiles")
+      .select("username, last_username_change")
+      .eq("id", user.id)
+      .single();
 
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(filePath, avatarFile);
-
-      if (uploadError) {
-        console.error("Avatar upload error:", uploadError);
-        // If bucket doesn't exist, skip avatar upload but continue with profile update
-        if (uploadError.message?.includes("not found") || uploadError.message?.includes("404")) {
-          console.warn("Avatars bucket not found. Skipping avatar upload. Please create the 'avatars' bucket in Supabase.");
-        } else {
-          return { message: "", error: "Failed to upload avatar. Please try a smaller image." };
-        }
-      } else {
-        const { data: { publicUrl } } = supabase.storage
-          .from("avatars")
-          .getPublicUrl(filePath);
-
-        if (publicUrl) {
-          userMetadata.avatar_url = `${publicUrl}?t=${new Date().getTime()}`;
+    if (existingProfile) {
+      // Username is being changed
+      if (existingProfile.username !== username.toLowerCase()) {
+        // Check cooldown (5 days = 432000000 milliseconds)
+        if (existingProfile.last_username_change) {
+          const lastChange = new Date(existingProfile.last_username_change).getTime();
+          const now = Date.now();
+          const daysSinceChange = (now - lastChange) / (1000 * 60 * 60 * 24);
+          
+          if (daysSinceChange < 5) {
+            const daysRemaining = (5 - daysSinceChange).toFixed(1);
+            return { 
+              message: "", 
+              error: `You can change your username again in ${daysRemaining} days` 
+            };
+          }
         }
       }
-    } catch (error) {
-      console.error("Avatar upload error:", error);
-      // Continue without avatar on error
     }
+
+    // Update user_profiles table
+    const { error: profileError } = await supabase
+      .from("user_profiles")
+      .upsert({
+        id: user.id,
+        username: username.toLowerCase(),
+        display_name: display_name || null,
+        bio: bio || null,
+        profile_picture_url: profile_picture_url || null,
+        banner_url: banner_url || null,
+        is_public: true,
+        last_username_change: existingProfile && existingProfile.username !== username.toLowerCase() 
+          ? new Date().toISOString() 
+          : existingProfile?.last_username_change || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+    if (profileError) {
+      console.error("Profile update error:", profileError);
+      return { message: "", error: `Failed to update profile: ${profileError.message}` };
+    }
+
+    revalidatePath("/settings");
+    revalidatePath("/dashboard");
+    revalidatePath(`/profile/${username}`);
+    return { message: "Profile updated successfully!", error: undefined };
+  } catch (error: any) {
+    console.error("Profile update error:", error);
+    return { message: "", error: error.message || "Failed to update profile." };
   }
-
-  const { error: updateError } = await supabase.auth.updateUser({
-    data: userMetadata,
-  });
-
-  if (updateError) {
-    console.error("User update error:", updateError);
-    return { message: "", error: "Failed to update profile." };
-  }
-
-  revalidatePath("/settings");
-  revalidatePath("/dashboard");
-  return { message: "Profile updated successfully!", error: undefined };
 }
 
 export async function getMediaListsAction(mediaId: string) {
@@ -922,3 +933,317 @@ export async function changePasswordAction(
 
   return { message: "Password changed successfully!", error: undefined };
 }
+
+// PROFILE ACTIONS - Get user profile
+export async function getUserProfileAction(username: string) {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('*')
+    .eq('username', username.toLowerCase())
+    .single();
+
+  if (error) {
+    console.error("Profile fetch error:", error);
+    return null;
+  }
+
+  return data;
+}
+
+// REVIEW ACTIONS
+export async function createReviewAction(mediaId: string, rating: number, text: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+
+  const { error, data } = await supabase
+    .from('reviews')
+    .upsert({
+      user_id: user.id,
+      media_id: mediaId,
+      rating,
+      text,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,media_id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Review creation error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true, review: data };
+}
+
+export async function deleteReviewAction(reviewId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+
+  const { error } = await supabase
+    .from('reviews')
+    .delete()
+    .eq('id', reviewId)
+    .eq('user_id', user.id);
+
+  if (error) {
+    console.error("Review delete error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true };
+}
+
+export async function getMediaReviewsAction(mediaId: string) {
+  const supabase = await createClient();
+
+  const { data: reviews, error } = await supabase
+    .from('reviews')
+    .select('id, user_id, rating, text, created_at, updated_at')
+    .eq('media_id', mediaId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error("Reviews fetch error:", error);
+    return [];
+  }
+
+  // Enrich with user profiles and like counts
+  const enrichedReviews = await Promise.all(
+    reviews.map(async (review) => {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('username, display_name, profile_picture_url')
+        .eq('id', review.user_id)
+        .single();
+
+      const { count: likeCount } = await supabase
+        .from('review_likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('review_id', review.id);
+
+      return {
+        ...review,
+        user: profile,
+        likeCount: likeCount || 0,
+      };
+    })
+  );
+
+  return enrichedReviews;
+}
+
+export async function likeReviewAction(reviewId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+
+  const { error } = await supabase
+    .from('review_likes')
+    .insert({
+      user_id: user.id,
+      review_id: reviewId,
+    });
+
+  if (error?.code === 'P0001' || error?.message?.includes('unique')) {
+    // Already liked, try to delete
+    const { error: deleteError } = await supabase
+      .from('review_likes')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('review_id', reviewId);
+
+    if (deleteError) return { error: deleteError.message };
+    return { success: true, liked: false };
+  }
+
+  if (error) {
+    console.error("Like error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true, liked: true };
+}
+
+// REVIEW COMMENTS ACTIONS
+export async function createCommentAction(reviewId: string, text: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+
+  const { error, data } = await supabase
+    .from('review_comments')
+    .insert({
+      user_id: user.id,
+      review_id: reviewId,
+      text,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Comment creation error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true, comment: data };
+}
+
+export async function getReviewCommentsAction(reviewId: string) {
+  const supabase = await createClient();
+
+  const { data: comments, error } = await supabase
+    .from('review_comments')
+    .select('id, user_id, text, created_at, updated_at')
+    .eq('review_id', reviewId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error("Comments fetch error:", error);
+    return [];
+  }
+
+  // Enrich with user profiles and like counts
+  const enrichedComments = await Promise.all(
+    comments.map(async (comment) => {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('username, display_name, profile_picture_url')
+        .eq('id', comment.user_id)
+        .single();
+
+      const { count: likeCount } = await supabase
+        .from('comment_likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('comment_id', comment.id);
+
+      return {
+        ...comment,
+        user: profile,
+        likeCount: likeCount || 0,
+      };
+    })
+  );
+
+  return enrichedComments;
+}
+
+export async function deleteCommentAction(commentId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+
+  const { error } = await supabase
+    .from('review_comments')
+    .delete()
+    .eq('id', commentId)
+    .eq('user_id', user.id);
+
+  if (error) {
+    console.error("Comment delete error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true };
+}
+
+// FOLLOW ACTIONS
+export async function followUserAction(targetUserId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) return { error: "Not authenticated" };
+  if (user.id === targetUserId) return { error: "Cannot follow yourself" };
+
+  const { error } = await supabase
+    .from('user_follows')
+    .insert({
+      follower_id: user.id,
+      following_id: targetUserId,
+    });
+
+  if (error?.code === 'P0001' || error?.message?.includes('unique')) {
+    // Already following, try to delete
+    const { error: deleteError } = await supabase
+      .from('user_follows')
+      .delete()
+      .eq('follower_id', user.id)
+      .eq('following_id', targetUserId);
+
+    if (deleteError) return { error: deleteError.message };
+    return { success: true, following: false };
+  }
+
+  if (error) {
+    console.error("Follow error:", error);
+    return { error: error.message };
+  }
+
+  return { success: true, following: true };
+}
+
+export async function getUserStatsAction(userId: string) {
+  const supabase = await createClient();
+
+  // Get review count and average rating
+  const { data: reviews } = await supabase
+    .from('reviews')
+    .select('rating')
+    .eq('user_id', userId);
+
+  const reviewCount = reviews?.length || 0;
+  const avgRating = reviews && reviews.length > 0
+    ? parseFloat((reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1))
+    : 0;
+
+  // Get total watch time - count items and estimate based on type
+  const { data: userMedia } = await supabase
+    .from('user_media')
+    .select('media_type')
+    .eq('user_id', userId)
+    .eq('status', 'completed');
+
+  // Rough estimate: movies ~2.5 hours, TV episodes ~45 min, books ~6 hours
+  let totalHours = 0;
+  if (userMedia) {
+    for (const media of userMedia) {
+      if (media.media_type === 'movie') {
+        totalHours += 2.5;
+      } else if (media.media_type === 'tv') {
+        totalHours += 0.75; // One episode average
+      } else if (media.media_type === 'book') {
+        totalHours += 6;
+      }
+    }
+  }
+  totalHours = Math.round(totalHours);
+
+  // Get follower count
+  const { count: followerCount } = await supabase
+    .from('user_follows')
+    .select('*', { count: 'exact', head: true })
+    .eq('following_id', userId);
+
+  // Get following count
+  const { count: followingCount } = await supabase
+    .from('user_follows')
+    .select('*', { count: 'exact', head: true })
+    .eq('follower_id', userId);
+
+  return {
+    reviewCount,
+    avgRating,
+    totalHours,
+    followerCount: followerCount || 0,
+    followingCount: followingCount || 0,
+  };
+}
+

@@ -9,12 +9,23 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/utils/supabase/server";
-import { ProfileForm } from "@/components/settings/profile-form";
 import { ChangePasswordForm } from "@/components/settings/change-password-form";
+import { ProfileEditor } from "@/components/settings/profile-editor";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return <div>Not authenticated</div>;
+  }
+
+  // Fetch existing profile
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('*')
+    .eq('id', user.id)
+    .single();
 
   return (
     <div className="space-y-8">
@@ -25,7 +36,7 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      {user && <ProfileForm user={user} />}
+      <ProfileEditor initialProfile={profile} user={user} />
 
       <Card>
         <CardHeader>

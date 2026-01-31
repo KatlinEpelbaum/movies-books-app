@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Sidebar,
@@ -35,6 +35,7 @@ import type { User } from "@supabase/supabase-js";
 
 import { signOut } from "@/app/auth/actions";
 import { Button } from "../ui/button";
+import { createClient } from "@/utils/supabase/client";
 
 const navItems = [
   { href: "/dashboard", icon: Home, label: "Dashboard" },
@@ -49,9 +50,35 @@ export function AppSidebar({ user }: { user: User }) {
   const isCollapsed = state === "collapsed";
   const pathname = usePathname();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [profileData, setProfileData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const supabase = await createClient();
+        const { data } = await supabase
+          .from("user_profiles")
+          .select("username, display_name, profile_picture_url")
+          .eq("id", user.id)
+          .single();
+        
+        setProfileData(data);
+      } catch (error) {
+        console.error("Failed to fetch profile:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (user?.id) {
+      fetchProfile();
+    }
+  }, [user?.id]);
   
-  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0];
-  const userAvatarUrl = user?.user_metadata?.avatar_url;
+  const userName = profileData?.display_name || profileData?.username || user?.email?.split('@')[0];
+  const userAvatarUrl = profileData?.profile_picture_url || user?.user_metadata?.avatar_url;
+  const userUsername = profileData?.username || user?.email?.split('@')[0];
 
   const handleLogoutClick = (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,18 +111,21 @@ export function AppSidebar({ user }: { user: User }) {
             ))}
           </SidebarMenu>
         </SidebarContent>
-        <SidebarFooter className="border-t">
-          <div className="flex w-full items-center p-2">
-            <Avatar className="h-9 w-9">
-              {userAvatarUrl && <AvatarImage src={userAvatarUrl} alt={userName} />}
-              <AvatarFallback>{userName?.charAt(0).toUpperCase()}</AvatarFallback>
-            </Avatar>
-            {!isCollapsed && (
-              <div className="ml-3">
-                <p className="text-sm font-semibold">{userName}</p>
-              </div>
-            )}
-          </div>
+        <SidebarFooter className="border-t space-y-2">
+          <Link href={userUsername ? `/profile/${userUsername}` : "#"} className={userUsername ? "cursor-pointer" : "cursor-default"}>
+            <div className="flex w-full items-center p-2 rounded-md hover:bg-accent transition-colors">
+              <Avatar className="h-9 w-9">
+                {userAvatarUrl && <AvatarImage src={userAvatarUrl} alt={userName} />}
+                <AvatarFallback>{userName?.charAt(0).toUpperCase()}</AvatarFallback>
+              </Avatar>
+              {!isCollapsed && (
+                <div className="ml-3">
+                  <p className="text-sm font-semibold">{userName}</p>
+                  {userUsername && <p className="text-xs text-muted-foreground">@{userUsername}</p>}
+                </div>
+              )}
+            </div>
+          </Link>
           <form onSubmit={handleLogoutClick} className="w-full">
             <SidebarMenuButton asChild tooltip="Log Out" className="w-full">
               <button type="submit">
