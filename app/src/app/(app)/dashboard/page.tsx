@@ -4,69 +4,63 @@ import { getTrendingMovies, getTrendingShows, getTrendingBooks } from "@/lib/med
 import { createClient } from "@/utils/supabase/server";
 import { DashboardContent } from "./content";
 
+// Cache dashboard for 1 hour, revalidate in background
+export const revalidate = 3600;
+
 export default async function DashboardPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Single database query to get both wishlist and favorites
-  const dbUserMediaData = user ? await supabase
-    .from('user_media')
-    .select(`
-      *,
-      media_items:media_id(*)
-    `)
-    .eq('user_id', user.id) : { data: null };
-
+  // Fetch trending data in parallel (with caching at API level)
   const [trendingMovies, trendingShows, trendingBooks] = await Promise.all([
     getTrendingMovies(),
     getTrendingShows(),
     getTrendingBooks(),
   ]);
 
-  // Create a map of favourite items for quick lookup from single query
-  const favouriteMap = new Map<string, boolean>();
-  if (dbUserMediaData.data) {
-    dbUserMediaData.data.forEach((item: any) => {
-      if (item.is_favourite) {
-        favouriteMap.set(item.media_id, true);
-      }
-    });
+  // Only fetch user's data if logged in
+  let userBooks: any[] = [];
+  let userMovies: any[] = [];
+  let userShows: any[] = [];
+
+  if (user) {
+    try {
+      const [books, movies, shows] = await Promise.all([
+        supabase.from('Book').select('id').eq('userId', user.id).limit(100),
+        supabase.from('Movie').select('id').eq('userId', user.id).limit(100),
+        supabase.from('TVShow').select('id').eq('userId', user.id).limit(100),
+      ]);
+
+      userBooks = books.data || [];
+      userMovies = movies.data || [];
+      userShows = shows.data || [];
+    } catch (error) {
+      console.error('Failed to fetch user media:', error);
+    }
   }
 
-  // Extract wishlist items from the same query
-  const wishlistData = {
-    data: dbUserMediaData.data?.filter((item: any) => item.status === 'plan_to_watch').slice(0, 5) || null
-  };
+  // Create maps for quick lookup
+  const userBookIds = new Set(userBooks.map((b: any) => b.id));
+  const userMovieIds = new Set(userMovies.map((m: any) => m.id));
+  const userShowIds = new Set(userShows.map((s: any) => s.id));
 
   // Add favourite status to trending items
   const trendingMoviesWithStatus = trendingMovies.map((item) => ({
     ...item,
-    isFavourite: favouriteMap.has(item.id) || false
+    isFavourite: userMovieIds.has(item.id) || false
   }));
 
   const trendingShowsWithStatus = trendingShows.map((item) => ({
     ...item,
-    isFavourite: favouriteMap.has(item.id) || false
+    isFavourite: userShowIds.has(item.id) || false
   }));
 
   const trendingBooksWithStatus = trendingBooks.map((item) => ({
     ...item,
-    isFavourite: favouriteMap.has(item.id) || false
+    isFavourite: userBookIds.has(item.id) || false
   }));
 
-  const wishlistItems: MediaItem[] = wishlistData.data ? wishlistData.data.map((item: any) => ({
-    id: item.media_items?.id || item.media_id,
-    title: item.media_items?.title || 'Unknown',
-    type: item.media_items?.type || 'book',
-    coverImage: item.media_items?.cover_image,
-    authorOrDirector: item.media_items?.author_or_director,
-    year: item.media_items?.year,
-    isFavourite: item.is_favourite || false,
-    description: '',
-    genres: item.media_items?.genres || [],
-  })) : [];
-
-  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0];
+  const userName = user?.email?.split('@')[0] || 'User';
 
   return (
     <DashboardContent

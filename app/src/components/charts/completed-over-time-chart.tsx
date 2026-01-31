@@ -105,6 +105,16 @@ export function CompletedOverTimeChart({
                 paddingLeft: "50px",
               }}
               iconType="square"
+              formatter={(value: string) => {
+                const labels: Record<string, string> = {
+                  completed: "✓ Completed",
+                  watching: "▶ Watching",
+                  plan_to_watch: "◆ Plan to Watch",
+                  on_hold: "⏸ On Hold",
+                  dropped: "✕ Dropped",
+                };
+                return labels[value] || value;
+              }}
             />
             <Bar dataKey="completed" stackId="a" fill="url(#colorCompleted)" radius={[6, 6, 0, 0]} />
             <Bar dataKey="watching" stackId="a" fill="url(#colorWatching)" radius={[6, 6, 0, 0]} />

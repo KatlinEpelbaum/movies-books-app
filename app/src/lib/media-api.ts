@@ -676,6 +676,12 @@ async function searchGutendexBooks(query: string, page: number = 1): Promise<Med
 }
 
 async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | null> {
+    // Use Next.js caching for 24 hours (86400 seconds)
+    return getCachedBookDetails(bookId);
+}
+
+const getCachedBookDetails = unstable_cache(
+    async (bookId: string): Promise<MediaItem | null> => {
     try {
         // Extract OpenLibrary ID from book-{id} format (e.g., book-OL81631W -> OL81631W)
         const cleanId = bookId.replace(/^book-/g, '');
@@ -684,7 +690,7 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
         console.log(`[OpenLibrary] Fetching book details from: ${workUrl}`);
         
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
+        const timeout = setTimeout(() => controller.abort(), 10000); // Reduced timeout
         
         const response = await fetch(workUrl, { signal: controller.signal });
         clearTimeout(timeout);
@@ -697,19 +703,21 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
         const work = await response.json();
         console.log(`[OpenLibrary] Book fetched successfully:`, work.title);
         
-        // Fetch author names
+        // Fetch author names in parallel
         let authors = 'Unknown Author';
         if (work.authors && Array.isArray(work.authors) && work.authors.length > 0) {
-            const authorPromises = work.authors.slice(0, 3).map(async (a: any) => {
+            const authorPromises = work.authors.slice(0, 2).map(async (a: any) => {
                 const authorKey = a.author?.key || a.key;
                 if (authorKey) {
                     try {
-                        const authorResponse = await fetch(`https://openlibrary.org${authorKey}.json`);
+                        const authorResponse = await fetch(`https://openlibrary.org${authorKey}.json`, {
+                            signal: AbortSignal.timeout(5000)
+                        });
                         if (authorResponse.ok) {
                             const authorData = await authorResponse.json();
                             return authorData.name || null;
                         }
-                    } catch {
+                    } catch (e) {
                         return null;
                     }
                 }
@@ -728,15 +736,17 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
             coverImage = `https://covers.openlibrary.org/b/id/${work.covers[0]}-L.jpg`;
         }
         
-        // Try editions for cover and page count
+        // Try editions for cover and page count (with timeout)
         let yearFromEdition = 0;
         try {
             const editionsUrl = `https://openlibrary.org/works/${cleanId}/editions.json`;
-            const editionsResponse = await fetch(editionsUrl);
+            const editionsResponse = await fetch(editionsUrl, {
+                signal: AbortSignal.timeout(8000)
+            });
             if (editionsResponse.ok) {
                 const editionsData = await editionsResponse.json();
                 if (editionsData.entries && editionsData.entries.length > 0) {
-                    for (const edition of editionsData.entries.slice(0, 10)) {
+                    for (const edition of editionsData.entries.slice(0, 5)) {
                         // Get cover from edition if we don't have one yet
                         if (!coverImage && edition.covers && edition.covers.length > 0) {
                             coverImage = `https://covers.openlibrary.org/b/id/${edition.covers[0]}-L.jpg`;
@@ -854,7 +864,10 @@ async function getOpenLibraryBookDetails(bookId: string): Promise<MediaItem | nu
         console.error("Error fetching OpenLibrary book details:", error);
         return null;
     }
-}
+},
+    ['openlib-book-details'],
+    { revalidate: 86400, tags: ['openlib-books'] }
+);
 
 async function getGutendexBookDetails(bookId: string): Promise<MediaItem | null> {
     try {

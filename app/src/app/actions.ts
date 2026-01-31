@@ -211,7 +211,7 @@ export async function manageUserLibraryAction(formData: FormData) {
   return { success: true };
 }
 
-export async function createCustomListAction(listName: string) {
+export async function createCustomListAction(listName: string, emoji?: string, description?: string, isPublic?: boolean) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -224,13 +224,16 @@ export async function createCustomListAction(listName: string) {
     return { error: "List name cannot be empty." };
   }
 
-  console.log('📝 Creating custom list:', listName);
+  console.log('📝 Creating custom list:', listName, 'emoji:', emoji, 'isPublic:', isPublic);
   
   const { data, error } = await supabase
     .from('custom_lists')
     .insert({
       user_id: user.id,
       name: listName.trim(),
+      emoji: emoji || null,
+      description: description || null,
+      is_public: isPublic || false,
     })
     .select()
     .single();
@@ -260,7 +263,7 @@ export async function getUserCustomLists() {
 
   const { data, error } = await supabase
     .from('custom_lists')
-    .select('id, name, created_at')
+    .select('id, name, emoji, description, is_public, created_at')
     .eq('user_id', user.id)
     .order('created_at', { ascending: true });
 
@@ -272,7 +275,13 @@ export async function getUserCustomLists() {
   return data || [];
 }
 
-export async function updateCustomListAction(listId: string, name: string, description?: string) {
+export async function updateCustomListAction(
+  listId: string, 
+  name: string, 
+  description?: string,
+  emoji?: string,
+  isPublic?: boolean
+) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -283,6 +292,12 @@ export async function updateCustomListAction(listId: string, name: string, descr
   const updates: any = { name };
   if (description !== undefined) {
     updates.description = description;
+  }
+  if (emoji !== undefined) {
+    updates.emoji = emoji;
+  }
+  if (isPublic !== undefined) {
+    updates.is_public = isPublic;
   }
 
   const { error } = await supabase
@@ -321,6 +336,66 @@ export async function deleteCustomListAction(listId: string) {
 
   revalidatePath('/list');
   return { success: true };
+}
+
+export async function getUserPublicCollections(userId: string) {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from('custom_lists')
+    .select('id, name, emoji, description, is_public, created_at, user_id')
+    .eq('user_id', userId)
+    .eq('is_public', true)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('❌ Error fetching public collections:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getCollectionItemsAction(collectionId: string) {
+  const supabase = await createClient();
+
+  console.log('📦 Fetching items for collection:', collectionId);
+
+  const { data, error } = await supabase
+    .from('user_media_custom_lists')
+    .select(`
+      id,
+      custom_list_id,
+      media_id,
+      media_items:media_id(id, title, type, cover_image, author_or_director, year, description, genres)
+    `)
+    .eq('custom_list_id', collectionId);
+
+  console.log('📦 Items fetch result:', { error, dataCount: data?.length });
+
+  if (error) {
+    console.error('❌ Error fetching collection items:', error);
+    return [];
+  }
+
+  if (!data || data.length === 0) {
+    console.log('📭 No items in collection');
+    return [];
+  }
+
+  return data.map((item: any) => {
+    const mediaItem = Array.isArray(item.media_items) ? item.media_items[0] : item.media_items;
+    return {
+      id: mediaItem?.id || item.media_id,
+      title: mediaItem?.title || 'Unknown',
+      type: mediaItem?.type || 'book',
+      coverImage: mediaItem?.cover_image,
+      authorOrDirector: mediaItem?.author_or_director,
+      year: mediaItem?.year,
+      description: mediaItem?.description,
+      genres: mediaItem?.genres || [],
+    };
+  });
 }
 
 export async function addMediaToListAction(mediaId: string, listId: string) {
@@ -474,308 +549,313 @@ export async function getUserStats(): Promise<Stats> {
   };
 
   if (!user) {
-    console.log('📊 No user found, returning empty stats');
     return emptyStats;
   }
 
-  // Fetch completed media
-  const { data: completedMedia, error: completedError } = await supabase
-    .from('user_media')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('status', 'completed');
+  try {
+    // Fetch ALL items from user_media table (for activity chart with all statuses)
+    const { data: allItemsData, error: allItemsError } = await supabase
+      .from('user_media')
+      .select(`
+        *,
+        media_items:media_id(*)
+      `)
+      .eq('user_id', user.id);
 
-  if (completedError) {
-    console.error("❌ Error fetching completed media:", completedError);
-    return emptyStats;
-  }
+    // Fetch ALL completed items from user_media table joined with media_items
+    const { data: completedData, error: completedError } = await supabase
+      .from('user_media')
+      .select(`
+        *,
+        media_items:media_id(*)
+      `)
+      .eq('user_id', user.id)
+      .eq('status', 'completed');
 
-  // Fetch currently watching media for partial watch hours and genre distribution
-  const { data: watchingMedia, error: watchingError } = await supabase
-    .from('user_media')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('status', 'watching');
+    // Also fetch reading/watching items for books and TV shows
+    const { data: readingWatchingData, error: readingError } = await supabase
+      .from('user_media')
+      .select(`
+        *,
+        media_items:media_id(*)
+      `)
+      .eq('user_id', user.id)
+      .in('status', ['reading', 'watching']);
 
-  if (watchingError) {
-    console.error("❌ Error fetching watching media:", watchingError);
-  }
+    console.log('📊 All items query - error:', allItemsError, 'count:', allItemsData?.length);
+    console.log('📊 Completed media query - error:', completedError, 'count:', completedData?.length);
+    console.log('📊 Reading/watching query - error:', readingError, 'count:', readingWatchingData?.length);
 
-  // Fetch ALL user library entries for activity chart
-  const { data: allLibraryEntries, error: allError } = await supabase
-    .from('user_media')
-    .select('*')
-    .eq('user_id', user.id);
+    const allItems = allItemsData || [];
+    const completed = completedData || [];
+    const readingWatching = readingWatchingData || [];
+    
+    // Separate by media type (for completed items)
+    const completedBooks = completed.filter((item: any) => item.media_items?.type === 'book');
+    const completedMovies = completed.filter((item: any) => item.media_items?.type === 'movie');
+    const completedShows = completed.filter((item: any) => item.media_items?.type === 'tv');
+    
+    // Separate ALL items by media type (for activity charts with all statuses)
+    const allBooks = allItems.filter((item: any) => item.media_items?.type === 'book');
+    const allMovies = allItems.filter((item: any) => item.media_items?.type === 'movie');
+    const allShows = allItems.filter((item: any) => item.media_items?.type === 'tv');
+    
+    const readingBooks = readingWatching.filter((item: any) => item.media_items?.type === 'book' && item.status === 'reading');
+    const watchingShows = readingWatching.filter((item: any) => item.media_items?.type === 'tv' && item.status === 'watching');
 
-  if (allError) {
-    console.error("❌ Error fetching all library entries:", allError);
-  }
+    console.log('📊 Separated - completed books:', completedBooks.length, 'movies:', completedMovies.length, 'shows:', completedShows.length);
+    console.log('📊 All items by type - books:', allBooks.length, 'movies:', allMovies.length, 'shows:', allShows.length);
+    console.log('📊 Reading/watching - reading books:', readingBooks.length, 'watching shows:', watchingShows.length);
 
-  const completedList = completedMedia || [];
-  const watchingList = watchingMedia || [];
-  const allEntries = allLibraryEntries || [];
+    // Total completed
+    const totalCompleted = completed.length;
 
-  console.log('📊 Found completed media count:', completedList.length);
-  console.log('📊 Found watching media count:', watchingList.length);
-  console.log('📊 Found total library entries:', allEntries.length);
-  
-  if (allEntries.length > 0) {
-    const statusCounts = new Map<string, number>();
-    allEntries.forEach(entry => {
-      const status = entry.status || 'unknown';
-      statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+    // Average ratings - only from completed items
+    const bookRatings = completedBooks.filter(b => b.rating && b.rating > 0).map(b => b.rating);
+    const movieRatings = completedMovies.filter(m => m.rating && m.rating > 0).map(m => m.rating);
+    const showRatings = completedShows.filter(s => s.rating && s.rating > 0).map(s => s.rating);
+    const allRatings = [...bookRatings, ...movieRatings, ...showRatings];
+    
+    const averageRating = allRatings.length > 0
+      ? parseFloat((allRatings.reduce((a, b) => a + b, 0) / allRatings.length).toFixed(1))
+      : 0;
+
+    // Genre distribution - from media_items genres field (only completed)
+    const genreCounts = new Map<string, number>();
+    completed.forEach((item: any) => {
+      if (item.media_items?.genres) {
+        let genreList: string[] = [];
+        const genres = item.media_items.genres;
+        
+        // Handle both array and comma-separated string formats
+        if (Array.isArray(genres)) {
+          genreList = genres;
+        } else if (typeof genres === 'string') {
+          // Split by comma if it's a string
+          genreList = genres.split(',').map((g: string) => g.trim()).filter((g: string) => g.length > 0);
+        }
+        
+        genreList.forEach((g: string) => {
+          const genre = g.trim ? g.trim() : g;
+          if (genre) genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+        });
+      }
     });
-    console.log('📊 Status breakdown:', Object.fromEntries(statusCounts));
-  }
+    const genreDistribution = [...genreCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, value]) => ({ name, value }));
 
-  // Get media details for all media IDs
-  const mediaIds = new Set([...completedList, ...watchingList].map(item => item.media_id));
-  const { data: mediaItems, error: mediaError } = await supabase
-    .from('media_items')
-    .select('id, genres, type, runtime, episode_runtime, number_of_episodes, number_of_seasons, episodes_per_season')
-    .in('id', Array.from(mediaIds));
-
-  if (mediaError) {
-    console.error("❌ Error fetching media items:", mediaError);
-    return emptyStats;
-  }
-
-  const mediaMap = new Map(mediaItems?.map(item => [item.id, item]) || []);
-
-  // Total Completed
-  const totalCompleted = completedList.length;
-
-  // Average Rating (only from completed items)
-  const ratedMedia = completedList.filter(item => item.rating !== null && item.rating > 0);
-  const avgRating = ratedMedia.length > 0
-    ? ratedMedia.reduce((sum, item) => sum + item.rating, 0) / ratedMedia.length
-    : 0;
-  const averageRating = parseFloat(avgRating.toFixed(1));
-
-  console.log('📊 Average rating:', averageRating, 'from', ratedMedia.length, 'rated items');
-
-  // Genre Distribution (from completed + currently watching)
-  const genreCounts = new Map<string, number>();
-  [...completedList, ...watchingList].forEach(item => {
-    const media = mediaMap.get(item.media_id);
-    media?.genres?.forEach((genre: string) => {
-      genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+    // Book stats - use actual total_pages from media_items for completed books
+    // + current_page for reading books
+    let totalBookPages = 0;
+    let totalBookLength = 0; // Sum of all book page counts (not averaged)
+    
+    completedBooks.forEach((b: any) => {
+      const bookPages = b.media_items?.total_pages || 0;
+      totalBookPages += bookPages;
+      totalBookLength += bookPages;
     });
-  });
-  const genreDistribution = [...genreCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([name, value]) => ({ name, value }));
-
-  console.log('📊 Genre distribution:', genreDistribution);
-
-  const oneYearAgo = new Date();
-  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-  oneYearAgo.setDate(1);
-  oneYearAgo.setHours(0,0,0,0);
-
-  // Initialize activity tracking by status
-  const completedOverTime = emptyStats.completedOverTime.map(m => ({
-    ...m,
-    completed: 0,
-    watching: 0,
-    plan_to_watch: 0,
-    on_hold: 0,
-    dropped: 0,
-  }));
-  const watchHoursByMonth = new Map<string, number>();
-  
-  let totalWatchMinutes = 0;
-
-  // Stats by media type
-  let movieWatchMinutes = 0;
-  let movieCompletedCount = 0;
-  let movieRatingSum = 0;
-  let movieRatedCount = 0;
-
-  let tvWatchMinutes = 0;
-  let tvCompletedCount = 0;
-  let tvEpisodesWatched = 0;
-  let tvRatingSum = 0;
-  let tvRatedCount = 0;
-
-  let bookPagesRead = 0;
-  let bookCompletedCount = 0;
-  let bookRatingSum = 0;
-  let bookRatedCount = 0;
-
-  // Calculate watch hours from completed media
-  completedList.forEach(item => {
-    const media = mediaMap.get(item.media_id);
-    if (!media) return;
-
-    let runtimeMinutes = 0;
+    readingBooks.forEach((b: any) => {
+      const bookPages = b.media_items?.total_pages || 0;
+      totalBookPages += b.current_page || 0;
+      totalBookLength += bookPages;
+    });
     
-    if (media.type === 'movie') {
-      runtimeMinutes = media.runtime || 120;
-      movieWatchMinutes += runtimeMinutes;
-      movieCompletedCount++;
-      if (item.rating && item.rating > 0) {
-        movieRatingSum += item.rating;
-        movieRatedCount++;
-      }
-    } else if (media.type === 'tv') {
-      const episodeRuntime = media.episode_runtime || 45;
-      const totalEpisodes = media.number_of_episodes || 0;
-      runtimeMinutes = episodeRuntime * totalEpisodes;
-      tvWatchMinutes += runtimeMinutes;
-      tvCompletedCount++;
-      tvEpisodesWatched += totalEpisodes;
-      if (item.rating && item.rating > 0) {
-        tvRatingSum += item.rating;
-        tvRatedCount++;
-      }
-    } else if (media.type === 'book') {
-      bookCompletedCount++;
-      // For completed books, count total pages from media_items if available
-      const totalPages = (media as any).total_pages || item.current_page || 300;
-      bookPagesRead += totalPages;
-      if (item.rating && item.rating > 0) {
-        bookRatingSum += item.rating;
-        bookRatedCount++;
-      }
-    }
-    
-    totalWatchMinutes += runtimeMinutes;
-    
-    if (item.completed_at) {
-      const completedDate = new Date(item.completed_at);
-      if (completedDate >= oneYearAgo) {
-          const month = completedDate.toLocaleString('default', { month: 'short' });
-          const hours = runtimeMinutes / 60;
-          watchHoursByMonth.set(month, (watchHoursByMonth.get(month) || 0) + hours);
-      }
-    }
-  });
+    const bookStats = {
+      completed: completedBooks.length,
+      pagesRead: totalBookPages,
+      avgRating: bookRatings.length > 0
+        ? parseFloat((bookRatings.reduce((a, b) => a + b, 0) / bookRatings.length).toFixed(1))
+        : 0,
+      avgBookLength: totalBookLength, // Total pages from all books (not averaged)
+    };
 
-  // Calculate watch hours from currently watching media (based on progress)
-  watchingList.forEach(item => {
-    const media = mediaMap.get(item.media_id);
-    if (!media) return;
+    // Movie stats - use actual runtime from media_items for each movie
+    let totalMovieMinutes = 0;
+    completedMovies.forEach((m: any) => {
+      totalMovieMinutes += m.media_items?.runtime || 120;
+    });
+    const movieStats = {
+      completed: completedMovies.length,
+      watchHours: Math.round(totalMovieMinutes / 60),
+      avgRating: movieRatings.length > 0
+        ? parseFloat((movieRatings.reduce((a, b) => a + b, 0) / movieRatings.length).toFixed(1))
+        : 0,
+    };
 
-    let runtimeMinutes = 0;
+    // TV stats - use actual episode_runtime and episode counts
+    let totalTVMinutes = 0;
+    let totalEpisodesWatched = 0;
     
-    if (media.type === 'movie') {
-      // For movies being watched, count full runtime
-      runtimeMinutes = media.runtime || 120;
-      movieWatchMinutes += runtimeMinutes;
-    } else if (media.type === 'tv') {
-      // For TV shows, count from season 1 to current season/episode
-      const episodeRuntime = media.episode_runtime || 45;
-      const currentSeason = item.current_season || 1;
-      const currentEpisode = item.current_episode || 1;
-      const episodesPerSeason = media.episodes_per_season || {};
-
-      // Count all episodes from season 1 to (current season - 1)
-      let totalMinutes = 0;
-      let episodeCount = 0;
-      for (let s = 1; s < currentSeason; s++) {
-        const episodesInSeason = episodesPerSeason[s] || 10;
-        totalMinutes += episodesInSeason * episodeRuntime;
-        episodeCount += episodesInSeason;
-      }
-      // Add episodes up to current episode in current season
-      totalMinutes += currentEpisode * episodeRuntime;
-      episodeCount += currentEpisode;
+    completedShows.forEach((show: any) => {
+      const episodeRuntime = show.media_items?.episode_runtime || 45;
+      const totalEpisodes = show.media_items?.number_of_episodes || 100;
+      totalTVMinutes += totalEpisodes * episodeRuntime;
+      totalEpisodesWatched += totalEpisodes;
+    });
+    
+    watchingShows.forEach((show: any) => {
+      const episodeRuntime = show.media_items?.episode_runtime || 45;
+      // For watching shows, estimate episodes watched from current season/episode
+      const currentSeason = show.current_season || 1;
+      const currentEpisode = show.current_episode || 1;
+      const episodesPerSeason = show.media_items?.episodes_per_season || {};
       
-      runtimeMinutes = totalMinutes;
-      tvWatchMinutes += runtimeMinutes;
-      tvEpisodesWatched += episodeCount;
-    } else if (media.type === 'book') {
-      // For books being read, count current page progress
-      bookPagesRead += item.current_page || 0;
-    }
-    
-    totalWatchMinutes += runtimeMinutes;
-  });
-
-  // Activity chart - count ALL library entries by status
-  // For completed: count in their completion month
-  // For others: count as added today (if created_at is null)
-  console.log('📊 Activity calculation - allEntries:', allEntries.length);
-  const activityByStatus = new Map<string, number>();
-  
-  allEntries.forEach(item => {
-    let monthToCount = null;
-    const status = item.status || 'unknown';
-    
-    if (item.status === 'completed' && item.completed_at) {
-      const completedDate = new Date(item.completed_at);
-      if (completedDate >= oneYearAgo) {
-        monthToCount = completedDate.toLocaleString('default', { month: 'short' });
-        console.log('📊 Completed item counted in', monthToCount);
+      let episodesWatched = 0;
+      for (let s = 1; s < currentSeason; s++) {
+        episodesWatched += episodesPerSeason[s] || 10;
       }
-    } else {
-      // For non-completed items, count them if created_at exists, otherwise assume recent
-      if (item.created_at) {
-        const createdDate = new Date(item.created_at);
-        if (createdDate >= oneYearAgo) {
-          monthToCount = createdDate.toLocaleString('default', { month: 'short' });
-          console.log('📊 Item status', item.status, 'counted in', monthToCount);
+      episodesWatched += currentEpisode;
+      
+      totalTVMinutes += episodesWatched * episodeRuntime;
+      totalEpisodesWatched += episodesWatched;
+    });
+    
+    const tvStats = {
+      completed: completedShows.length,
+      watchHours: Math.round(totalTVMinutes / 60),
+      episodesWatched: totalEpisodesWatched,
+      avgRating: showRatings.length > 0
+        ? parseFloat((showRatings.reduce((a, b) => a + b, 0) / showRatings.length).toFixed(1))
+        : 0,
+    };
+
+    const totalWatchHours = movieStats.watchHours + tvStats.watchHours;
+
+    // Helper function to calculate genre distribution for a specific media type
+    const getGenreDistribution = (items: any[]) => {
+      const genreCounts = new Map<string, number>();
+      items.forEach((item: any) => {
+        if (item.media_items?.genres) {
+          let genreList: string[] = [];
+          const genres = item.media_items.genres;
+          
+          // Handle both array and comma-separated string formats
+          if (Array.isArray(genres)) {
+            genreList = genres;
+          } else if (typeof genres === 'string') {
+            // Split by comma if it's a string
+            genreList = genres.split(',').map((g: string) => g.trim()).filter((g: string) => g.length > 0);
+          }
+          
+          genreList.forEach((g: string) => {
+            const genre = g.trim ? g.trim() : g;
+            if (genre) genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+          });
         }
-      } else {
-        // If no created_at, count as today/current month
-        const now = new Date();
-        monthToCount = now.toLocaleString('default', { month: 'short' });
-        console.log('📊 Item status', item.status, 'counted in current month (no created_at)');
-      }
-    }
-    
-    if (monthToCount) {
-      const monthEntry = completedOverTime.find(m => m.name === monthToCount);
-      if (monthEntry) {
-        // Increment the count for this status
-        const statusKey = status as keyof typeof monthEntry;
-        if (statusKey in monthEntry && typeof monthEntry[statusKey] === 'number') {
-          monthEntry[statusKey] = (monthEntry[statusKey] as number) + 1;
+      });
+      return [...genreCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([name, value]) => ({ name, value }));
+    };
+
+    // Helper function to calculate activity over time with status breakdown
+    const getActivityOverTimeWithStatus = (items: any[]) => {
+      const template: any[] = Array(12).fill(0).map((_, i) => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - (11 - i));
+        return { 
+          name: d.toLocaleString('default', { month: 'short' }), 
+          total: 0,
+          completed: 0,
+          watching: 0,
+          plan_to_watch: 0,
+          on_hold: 0,
+          dropped: 0,
+        };
+      });
+      
+      const now = new Date();
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+
+      items.forEach((item: any) => {
+        const dateField = item.created_at;
+        if (dateField) {
+          const date = new Date(dateField);
+          if (date >= oneYearAgo) {
+            const month = date.toLocaleString('default', { month: 'short' });
+            const entry = template.find(e => e.name === month);
+            if (entry) {
+              entry.total = (entry.total || 0) + 1;
+              const status = item.status || 'plan_to_watch';
+              entry[status] = (entry[status] || 0) + 1;
+            }
+          }
         }
-        // Also increment total for the chart
-        monthEntry.total++;
-        activityByStatus.set(status, (activityByStatus.get(status) || 0) + 1);
-      }
-    }
-  });
-  
-  console.log('📊 Activity by status:', Object.fromEntries(activityByStatus));
+      });
+      return template;
+    };
 
-  const totalWatchHours = Math.floor(totalWatchMinutes / 60);
-  const remainingMinutes = totalWatchMinutes % 60;
+    // Helper function to calculate activity for completed items only (for filtered views)
+    const getActivityByType = (items: any[]) => {
+      const template = Array(12).fill(0).map((_, i) => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - (11 - i));
+        return { name: d.toLocaleString('default', { month: 'short' }), total: 0, completed: 0 };
+      });
+      
+      const now = new Date();
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), 1);
 
-  console.log('📊 Total watch time:', totalWatchHours, 'hours', remainingMinutes, 'minutes');
+      items.forEach((item: any) => {
+        const dateField = item.created_at;
+        if (dateField) {
+          const date = new Date(dateField);
+          if (date >= oneYearAgo) {
+            const month = date.toLocaleString('default', { month: 'short' });
+            const entry = template.find(e => e.name === month);
+            if (entry) {
+              entry.total = (entry.total || 0) + 1;
+              entry.completed = (entry.completed || 0) + 1;
+            }
+          }
+        }
+      });
+      return template;
+    };
 
-  return {
-    totalCompleted,
-    averageRating,
-    genreDistribution,
-    completedOverTime,
-    totalWatchHours,
-    totalWatchMinutes: remainingMinutes,
-    watchHoursByMonth: completedOverTime.map(m => ({
-        month: m.name,
-        hours: Math.round(watchHoursByMonth.get(m.name) || 0)
-    })),
-    movieStats: {
-      completed: movieCompletedCount,
-      watchHours: Math.floor(movieWatchMinutes / 60),
-      avgRating: movieRatedCount > 0 ? parseFloat((movieRatingSum / movieRatedCount).toFixed(1)) : 0,
-    },
-    tvStats: {
-      completed: tvCompletedCount,
-      watchHours: Math.floor(tvWatchMinutes / 60),
-      episodesWatched: tvEpisodesWatched,
-      avgRating: tvRatedCount > 0 ? parseFloat((tvRatingSum / tvRatedCount).toFixed(1)) : 0,
-    },
-    bookStats: {
-      completed: bookCompletedCount,
-      pagesRead: bookPagesRead,
-      avgRating: bookRatedCount > 0 ? parseFloat((bookRatingSum / bookRatedCount).toFixed(1)) : 0,
-    },
-  };
+    // Genre distributions by type
+    const allGenres = getGenreDistribution(completed);
+    const movieGenres = getGenreDistribution(completedMovies);
+    const bookGenres = getGenreDistribution(completedBooks);
+    const tvGenres = getGenreDistribution(completedShows);
+
+    // Activity over time by type - use ALL items for each tab so it shows all statuses
+    const allActivity = getActivityOverTimeWithStatus(allItems);
+    const movieActivity = getActivityOverTimeWithStatus(allMovies);
+    const bookActivity = getActivityOverTimeWithStatus(allBooks);
+    const tvActivity = getActivityOverTimeWithStatus(allShows);
+
+    return {
+      totalCompleted,
+      averageRating,
+      genreDistribution: allGenres,
+      completedOverTime: allActivity,
+      totalWatchHours,
+      totalWatchMinutes: 0,
+      watchHoursByMonth: [],
+      movieStats: {
+        ...movieStats,
+        genreDistribution: movieGenres,
+        activityOverTime: movieActivity,
+      },
+      tvStats: {
+        ...tvStats,
+        genreDistribution: tvGenres,
+        activityOverTime: tvActivity,
+      },
+      bookStats: {
+        ...bookStats,
+        genreDistribution: bookGenres,
+        activityOverTime: bookActivity,
+      },
+    };
+  } catch (error) {
+    console.error('Error calculating stats:', error);
+    return emptyStats;
+  }
 }
 
 

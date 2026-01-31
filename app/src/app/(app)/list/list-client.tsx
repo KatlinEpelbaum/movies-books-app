@@ -3,16 +3,22 @@
 import { useState, useEffect } from "react";
 import { MediaCard } from "@/components/media/media-card";
 import { MediaItem } from "@/lib/types";
-import { Heart, Edit2, Trash2, X } from "lucide-react";
+import { Heart, Edit2, Trash2, X, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { getListItemsAction, removeMediaFromListAction, updateCustomListAction, deleteCustomListAction } from "@/app/actions";
 import { useRouter } from "next/navigation";
+import { CreateCollectionDialog } from "@/components/collections/create-collection-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 interface List {
   id: string;
   name: string;
+  emoji?: string;
   description?: string;
+  is_public?: boolean;
   created_at: string;
 }
 
@@ -40,8 +46,11 @@ export default function ListPageClient({
   const [editingListId, setEditingListId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [editEmoji, setEditEmoji] = useState('');
+  const [editIsPublic, setEditIsPublic] = useState(false);
   const [deletingListId, setDeletingListId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   const selectedList = initialLists.find(l => l.id === selectedListId);
 
@@ -69,13 +78,21 @@ export default function ListPageClient({
     setEditingListId(list.id);
     setEditName(list.name);
     setEditDescription(list.description || '');
+    setEditEmoji(list.emoji || '');
+    setEditIsPublic(list.is_public || false);
   };
 
   const handleSaveEdit = async () => {
     if (!editingListId || !editName.trim()) return;
     setIsSubmitting(true);
     
-    const result = await updateCustomListAction(editingListId, editName.trim(), editDescription.trim() || undefined);
+    const result = await updateCustomListAction(
+      editingListId, 
+      editName.trim(), 
+      editDescription.trim() || undefined,
+      editEmoji || undefined,
+      editIsPublic
+    );
     
     if (result.success) {
       setEditingListId(null);
@@ -155,12 +172,23 @@ export default function ListPageClient({
 
       {/* Lists Carousel */}
       <section className="space-y-4">
-        <h2 className="font-headline text-2xl font-semibold">Your Collections</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-headline text-2xl font-semibold">Your Collections</h2>
+          <Button 
+            onClick={() => setCreateDialogOpen(true)}
+            variant="outline"
+            size="sm"
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Make Collection
+          </Button>
+        </div>
         
         {initialLists.length === 0 ? (
           <div className="flex h-32 items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/20">
             <p className="text-center text-muted-foreground">
-              No custom lists yet. Create one from a media page!
+              No custom collections yet. Create one now!
             </p>
           </div>
         ) : (
@@ -171,9 +199,11 @@ export default function ListPageClient({
                   key={list.id}
                   onClick={() => setSelectedListId(list.id === selectedListId ? null : list.id)}
                   variant={selectedListId === list.id ? "default" : "outline"}
-                  className="whitespace-nowrap"
+                  className="whitespace-nowrap gap-2"
+                  title={list.is_public ? 'Public collection' : 'Private collection'}
                 >
-                  📌 {list.name}
+                  {list.emoji || '📌'} {list.name}
+                  {list.is_public && <span className="text-xs opacity-70">🌍</span>}
                 </Button>
               ))}
             </div>
@@ -275,6 +305,40 @@ export default function ListPageClient({
               </div>
               
               <div>
+                <label htmlFor="edit-emoji" className="block text-sm font-medium mb-1">
+                  Emoji (optional)
+                </label>
+                <Select value={editEmoji || "none"} onValueChange={(val) => setEditEmoji(val === "none" ? "" : val)}>
+                  <SelectTrigger id="edit-emoji">
+                    <SelectValue placeholder="Select an emoji" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="📚">📚 (Books)</SelectItem>
+                    <SelectItem value="🎬">🎬 (Movies)</SelectItem>
+                    <SelectItem value="📺">📺 (TV)</SelectItem>
+                    <SelectItem value="⭐">⭐</SelectItem>
+                    <SelectItem value="❤️">❤️</SelectItem>
+                    <SelectItem value="🎯">🎯</SelectItem>
+                    <SelectItem value="🔖">🔖</SelectItem>
+                    <SelectItem value="📖">📖</SelectItem>
+                    <SelectItem value="🎪">🎪</SelectItem>
+                    <SelectItem value="🎭">🎭</SelectItem>
+                    <SelectItem value="🎨">🎨</SelectItem>
+                    <SelectItem value="🎵">🎵</SelectItem>
+                    <SelectItem value="🏆">🏆</SelectItem>
+                    <SelectItem value="✨">✨</SelectItem>
+                    <SelectItem value="🌟">🌟</SelectItem>
+                    <SelectItem value="💫">💫</SelectItem>
+                    <SelectItem value="🎁">🎁</SelectItem>
+                    <SelectItem value="🔥">🔥</SelectItem>
+                    <SelectItem value="💎">💎</SelectItem>
+                    <SelectItem value="🌈">🌈</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
                 <label htmlFor="edit-description" className="block text-sm font-medium mb-1">
                   Description (optional)
                 </label>
@@ -285,6 +349,17 @@ export default function ListPageClient({
                   className="w-full px-3 py-2 border rounded-lg"
                   placeholder="Enter list description"
                   rows={3}
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <div>
+                  <Label className="font-medium">Visibility</Label>
+                  <p className="text-xs text-muted-foreground mt-1">{editIsPublic ? 'Public - visible on profile' : 'Private - only you can see'}</p>
+                </div>
+                <Switch
+                  checked={editIsPublic}
+                  onCheckedChange={setEditIsPublic}
                 />
               </div>
             </div>
@@ -337,6 +412,12 @@ export default function ListPageClient({
           </div>
         </div>
       )}
+
+      <CreateCollectionDialog 
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCollectionCreated={() => router.refresh()}
+      />
     </div>
   );
 }

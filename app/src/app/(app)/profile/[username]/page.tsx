@@ -1,12 +1,13 @@
 import { notFound } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Users, Star, Clock, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { BackButton } from '@/components/media/back-button';
 import { createClient } from '@/utils/supabase/server';
-import { getUserProfileAction, getUserStatsAction } from '@/app/actions';
+import { getUserProfileAction, getUserStatsAction, getUserPublicCollections } from '@/app/actions';
 import { FollowButton } from '@/components/profile/follow-button';
 import { ProfileReviews } from '@/components/profile/profile-reviews';
 
@@ -15,7 +16,8 @@ export default async function PublicProfilePage({
 }: {
   params: { username: string };
 }) {
-  const profile = await getUserProfileAction(params.username);
+  const resolvedParams = await params;
+  const profile = await getUserProfileAction(resolvedParams.username);
 
   if (!profile || !profile.is_public) {
     notFound();
@@ -31,6 +33,9 @@ export default async function PublicProfilePage({
     .eq('user_id', profile.id)
     .order('created_at', { ascending: false })
     .limit(10);
+
+  // Get public collections
+  const publicCollections = await getUserPublicCollections(profile.id);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -135,6 +140,33 @@ export default async function PublicProfilePage({
           </Card>
         )}
       </div>
+
+      {/* Public Collections Section */}
+      {publicCollections && publicCollections.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="font-headline text-2xl font-bold">Public Collections</h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {publicCollections.map((collection: any) => (
+              <Link key={collection.id} href={`/profile/${resolvedParams.username}/collection/${collection.id}`}>
+                <div className="cursor-pointer hover:shadow-lg transition-shadow rounded-lg border p-4 bg-card h-full">
+                  <div className="flex items-start gap-3">
+                    <div className="text-3xl">{collection.emoji || '📌'}</div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold">{collection.name}</h3>
+                      {collection.description && (
+                        <p className="text-sm text-muted-foreground mt-1">{collection.description}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Public Collection
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

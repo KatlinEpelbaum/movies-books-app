@@ -204,10 +204,10 @@ export function StatsClient({ stats }: StatsClientProps) {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
             <div className="lg:col-span-4">
-              <CompletedOverTimeChart data={completedOverTime} />
+              <CompletedOverTimeChart data={movieStats.activityOverTime || completedOverTime} />
             </div>
             <div className="lg:col-span-3">
-              <GenreDistributionChart data={genreDistribution} />
+              <GenreDistributionChart data={movieStats.genreDistribution || genreDistribution} />
             </div>
           </div>
         )}
@@ -267,10 +267,10 @@ export function StatsClient({ stats }: StatsClientProps) {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
             <div className="lg:col-span-4">
-              <CompletedOverTimeChart data={completedOverTime} />
+              <CompletedOverTimeChart data={tvStats.activityOverTime || completedOverTime} />
             </div>
             <div className="lg:col-span-3">
-              <GenreDistributionChart data={genreDistribution} />
+              <GenreDistributionChart data={tvStats.genreDistribution || genreDistribution} />
             </div>
           </div>
         )}
@@ -309,18 +309,7 @@ export function StatsClient({ stats }: StatsClientProps) {
               <p className="text-xs text-muted-foreground">for books</p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Avg Book Length</CardTitle>
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {bookStats.completed > 0 ? Math.round(bookStats.pagesRead / bookStats.completed) : 0}
-              </div>
-              <p className="text-xs text-muted-foreground">pages per book</p>
-            </CardContent>
-          </Card>
+          
         </div>
 
         {bookStats.completed === 0 ? (
@@ -332,10 +321,10 @@ export function StatsClient({ stats }: StatsClientProps) {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
             <div className="lg:col-span-4">
-              <CompletedOverTimeChart data={completedOverTime} />
+              <CompletedOverTimeChart data={bookStats.activityOverTime || completedOverTime} />
             </div>
             <div className="lg:col-span-3">
-              <GenreDistributionChart data={genreDistribution} />
+              <GenreDistributionChart data={bookStats.genreDistribution || genreDistribution} />
             </div>
           </div>
         )}

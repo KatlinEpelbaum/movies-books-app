@@ -5,7 +5,9 @@ import ListPageClient from "./list-client";
 interface List {
   id: string;
   name: string;
+  emoji?: string;
   description?: string;
+  is_public?: boolean;
   created_at: string;
 }
 
@@ -46,7 +48,7 @@ export default async function ListPage() {
     // Fetch custom lists
     const { data: listData, error: listError } = await supabase
       .from('custom_lists')
-      .select('id, name, description, created_at')
+      .select('id, name, emoji, description, is_public, created_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: true });
 

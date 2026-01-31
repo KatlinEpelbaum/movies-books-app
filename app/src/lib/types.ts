@@ -68,17 +68,24 @@ export interface Stats {
     completed: number;
     watchHours: number;
     avgRating: number;
+    genreDistribution?: { name: string; value: number }[];
+    activityOverTime?: { name: string; total: number }[];
   };
   tvStats: {
     completed: number;
     watchHours: number;
     episodesWatched: number;
     avgRating: number;
+    genreDistribution?: { name: string; value: number }[];
+    activityOverTime?: { name: string; total: number }[];
   };
   bookStats: {
     completed: number;
     pagesRead: number;
     avgRating: number;
+    avgBookLength?: number;
+    genreDistribution?: { name: string; value: number }[];
+    activityOverTime?: { name: string; total: number }[];
   };
 }
 

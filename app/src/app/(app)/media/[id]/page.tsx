@@ -36,22 +36,47 @@ import { createClient } from "@/utils/supabase/server";
 import { MediaUserControls } from "@/components/media/media-user-controls";
 import { getUserCustomLists, getMediaListsAction } from "@/app/actions";
 
+// Cache media details for 24 hours, revalidate in background
+export const revalidate = 86400;
+
 const typeIcons = {
   book: <Book className="h-4 w-4" />,
   movie: <Film className="h-4 w-4" />,
   tv: <Tv className="h-4 w-4" />,
 };
 
-async function getMediaUserData(mediaId: string, userId?: string) {
+async function getMediaUserData(mediaId: string, userId?: string, type?: string) {
     if (!userId) return null;
     const supabase = await createClient();
-    const { data } = await supabase
-        .from('user_media')
-        .select('status, rating, is_favourite, current_episode, current_season, current_page')
-        .eq('user_id', userId)
-        .eq('media_id', mediaId)
+    
+    // Query the appropriate table based on media type
+    if (type === 'book') {
+      const { data } = await supabase
+        .from('Book')
+        .select('status, rating, userId')
+        .eq('userId', userId)
+        .eq('id', mediaId)
         .single();
-    return data;
+      return data;
+    } else if (type === 'movie') {
+      const { data } = await supabase
+        .from('Movie')
+        .select('status, rating, userId')
+        .eq('userId', userId)
+        .eq('id', mediaId)
+        .single();
+      return data;
+    } else if (type === 'tv') {
+      const { data } = await supabase
+        .from('TVShow')
+        .select('status, rating, userId, currentSeason, currentEpisode')
+        .eq('userId', userId)
+        .eq('id', mediaId)
+        .single();
+      return data;
+    }
+    
+    return null;
 }
 
 
@@ -59,22 +84,23 @@ export default async function MediaDetailPage({ params }: { params: { id: string
   const { id } = await params;
   const [type, apiId] = id.split(/-(.+)/);
 
-  console.log(`[Media Detail] Received ID: ${id}, Parsed Type: ${type}, API ID: ${apiId}`);
-
   if (!type || !apiId || !['book', 'movie', 'tv'].includes(type)) {
-    console.log(`[Media Detail] Invalid ID format or type`);
     notFound();
   }
 
+  // Fetch media details (cached by ISR)
   const media = await getMediaDetails(id, type as MediaType);
   if (!media) {
-    console.log(`[Media Detail] getMediaDetails returned null for ID: ${id}`);
     notFound();
   }
   
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const userData = await getMediaUserData(media.id, user?.id);
+  
+  // Only fetch user data if logged in (fast query)
+  const userData = user ? await getMediaUserData(media.id, user.id, type) : null;
+  
+  // Defer custom lists to client or skip if not logged in
   const customLists = user ? await getUserCustomLists() : [];
   const mediaLists = user ? await getMediaListsAction(media.id) : [];
 

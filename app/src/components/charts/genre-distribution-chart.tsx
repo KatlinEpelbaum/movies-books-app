@@ -18,37 +18,40 @@ import {
   ChartLegendContent,
 } from "@/components/ui/chart";
 
-const chartConfig = {
-  value: {
-    label: "Items",
-  },
-  "Sci-Fi": {
-    label: "Sci-Fi",
-    color: "hsl(var(--chart-1))",
-  },
-  Fantasy: {
-    label: "Fantasy",
-    color: "hsl(var(--chart-2))",
-  },
-  Drama: {
-    label: "Drama",
-    color: "hsl(var(--chart-3))",
-  },
-  Action: {
-    label: "Action",
-    color: "hsl(var(--chart-4))",
-  },
-  Thriller: {
-    label: "Thriller",
-    color: "hsl(var(--chart-5))",
-  },
-};
+const baseColors = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))",
+  "hsl(220, 70%, 50%)",
+  "hsl(280, 70%, 50%)",
+  "hsl(340, 70%, 50%)",
+  "hsl(40, 70%, 50%)",
+  "hsl(100, 70%, 50%)",
+];
 
 export function GenreDistributionChart({
   data,
 }: {
   data: { name: string; value: number }[];
 }) {
+  // Create a dynamic config based on the data genres
+  const dynamicConfig: Record<string, any> = {
+    value: {
+      label: "Items",
+    },
+  };
+
+  data.forEach((item, index) => {
+    if (!dynamicConfig[item.name]) {
+      dynamicConfig[item.name] = {
+        label: item.name,
+        color: baseColors[index % baseColors.length],
+      };
+    }
+  });
+
   return (
     <Card className="flex flex-col">
       <CardHeader>
@@ -57,7 +60,7 @@ export function GenreDistributionChart({
       </CardHeader>
       <CardContent className="flex-1 pb-0">
         <ChartContainer
-          config={chartConfig}
+          config={dynamicConfig}
           className="mx-auto aspect-square max-h-[300px]"
         >
           <PieChart>
@@ -75,13 +78,11 @@ export function GenreDistributionChart({
               {data.map((entry, index) => (
                 <Cell
                   key={`cell-${index}`}
-                  fill={
-                    chartConfig[entry.name as keyof typeof chartConfig]?.color
-                  }
+                  fill={dynamicConfig[entry.name]?.color || baseColors[index % baseColors.length]}
                 />
               ))}
             </Pie>
-             <ChartLegend
+            <ChartLegend
               content={<ChartLegendContent nameKey="name" />}
               className="-translate-y-2 flex-wrap gap-2 [&>*]:basis-1/4 [&>*]:justify-center"
             />

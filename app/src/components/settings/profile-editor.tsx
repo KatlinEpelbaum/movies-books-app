@@ -44,6 +44,36 @@ export function ProfileEditor({ initialProfile, user }: any) {
         return;
       }
 
+      const bucketName = type === 'banner' ? 'banner' : 'avatars';
+      const currentUrl = type === 'banner' ? formData.banner_url : formData.profile_picture_url;
+
+      // Delete old file if it exists
+      if (currentUrl) {
+        try {
+          // Extract the file path from the public URL
+          // Format: https://[project].supabase.co/storage/v1/object/public/[bucket]/[path]
+          const urlParts = currentUrl.split(`/object/public/${bucketName}/`);
+          if (urlParts.length === 2) {
+            const oldFilePath = decodeURIComponent(urlParts[1]);
+            console.log(`🗑️ Deleting old ${type} file:`, oldFilePath);
+            
+            const { error: deleteError } = await supabase.storage
+              .from(bucketName)
+              .remove([oldFilePath]);
+            
+            if (deleteError) {
+              console.warn(`⚠️ Could not delete old ${type}:`, deleteError);
+              // Don't throw - continue with upload even if delete fails
+            } else {
+              console.log(`✅ Old ${type} deleted successfully`);
+            }
+          }
+        } catch (deleteErr) {
+          console.warn(`⚠️ Error processing old ${type} deletion:`, deleteErr);
+          // Continue with upload even if deletion fails
+        }
+      }
+
       // Sanitize filename - remove special characters and keep only safe ones
       const sanitizedName = file.name
         .replace(/[^a-zA-Z0-9.-]/g, '_')
@@ -51,7 +81,6 @@ export function ProfileEditor({ initialProfile, user }: any) {
         .toLowerCase();
       
       const fileName = `${authUser.id}/${type}/${Date.now()}-${sanitizedName}`;
-      const bucketName = type === 'banner' ? 'banner' : 'avatars';
 
       // Upload with proper auth context and options
       const { data, error: uploadError } = await supabase.storage
